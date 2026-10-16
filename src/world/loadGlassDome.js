@@ -3,7 +3,7 @@ import { getModelLoader } from "./modelLoader.js";
 
 let domeMixer = null;
 
-export async function loadGlassDome(scene) {
+export async function loadGlassDome(scene, physicsSystem = null) {
   const loader = getModelLoader();
   try {
     const gltf = await loader.loadAsync("/models/props/Glass-dome.glb");
@@ -107,6 +107,21 @@ export async function loadGlassDome(scene) {
     }
 
     scene.add(domeRoot);
+
+    // Register centerpiece dome obstacle colliders
+    if (physicsSystem) {
+      // Central glass sphere & core pillars (radius ~ 4.5m, height ~ 8.0m)
+      physicsSystem.addStaticBox(0, 4.0, 0, 4.5, 4.0, 4.5);
+
+      // 4 Satellite dome plinths
+      const satOffset = 13.5;
+      const satH = 1.6;
+      physicsSystem.addStaticBox(-satOffset, 2.0, -satOffset, satH, 2.0, satH);
+      physicsSystem.addStaticBox(satOffset, 2.0, -satOffset, satH, 2.0, satH);
+      physicsSystem.addStaticBox(-satOffset, 2.0, satOffset, satH, 2.0, satH);
+      physicsSystem.addStaticBox(satOffset, 2.0, satOffset, satH, 2.0, satH);
+    }
+
     return { domeRoot, mixer: domeMixer };
   } catch (error) {
     console.error("Error loading Glass Dome model:", error);

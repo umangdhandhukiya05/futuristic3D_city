@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { getModelLoader } from "./modelLoader.js";
 
-export async function loadBenches(scene) {
+export async function loadBenches(scene, physicsSystem = null) {
   const loader = getModelLoader();
   try {
     const gltf = await loader.loadAsync("/models/props/benches.glb");
@@ -70,6 +70,15 @@ export async function loadBenches(scene) {
       });
 
       benchesGroup.add(bench);
+
+      // Register bench obstacle collider (width ~ 2.4m, height ~ 0.7m, depth ~ 1.0m)
+      if (physicsSystem) {
+        const isRotated = Math.abs(rotY) > 0.1 && Math.abs(rotY - Math.PI) > 0.1;
+        const hx = isRotated ? 0.5 : 1.2;
+        const hz = isRotated ? 1.2 : 0.5;
+        physicsSystem.addStaticBox(x, y + 0.35, z, hx, 0.35, hz);
+      }
+
       return bench;
     };
 

@@ -98,10 +98,10 @@ export function getCircuitState(distance, R = 61.5, rCorner = 16.0) {
     }
 
     const yaw = -Math.atan2(dz, dx);
-    return { x, z, yaw, perimeter };
+    return { x, z, yaw, perimeter, dx, dz };
 }
 
-export async function loadVehicles(scene) {
+export async function loadVehicles(scene, physicsSystem = null) {
     const loader = getModelLoader();
     const vehiclesGroup = new THREE.Group();
     vehiclesGroup.name = "City_Vehicles_Group";
@@ -114,17 +114,65 @@ export async function loadVehicles(scene) {
             loader.loadAsync("/models/vehicle/city_bus.glb")
         ]);
 
-        const createVehicle = (gltfScene, scale = 0.42) => {
+        const CAR_SCALE = 0.42;
+        const BUS_SCALE = 0.45;
+
+        // Asphalt road driving lane radius R = 61.5 (tile center is 60.0; outer driving lane is ~61.5)
+        const R = 61.5;
+        const rCorner = 16.0;
+        const dummyState = getCircuitState(0, R, rCorner);
+        const P = dummyState.perimeter;
+
+        /**
+         * Helper to instantiate a customized vehicle with individual paint color and optional physics body
+         */
+        const createVehicleInstance = ({
+            type,
+            gltfScene,
+            scale,
+            primaryColor,
+            accentColor = null,
+            startDistance = 0,
+            cruiseSpeed = 10.5,
+        }) => {
             const wrapper = new THREE.Group();
+            wrapper.name = `${type}_${primaryColor.toString(16)}`;
             const model = gltfScene.clone(true);
-            model.scale.set(scale, scale, scale);
+            const pColor = new THREE.Color(primaryColor);
+            const aColor = accentColor ? new THREE.Color(accentColor) : null;
 
             model.traverse((obj) => {
                 if (obj.isMesh) {
                     obj.castShadow = true;
                     obj.receiveShadow = true;
+                    if (obj.material) {
+                        if (Array.isArray(obj.material)) {
+                            obj.material = obj.material.map((m) => m.clone());
+                        } else {
+                            obj.material = obj.material.clone();
+                        }
+                        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+                        mats.forEach((m) => {
+                            m.shadowSide = THREE.DoubleSide;
+                            if (m.name === "Car_SilverPaint") {
+                                m.color.copy(pColor);
+                                m.metalness = 0.88;
+                                m.roughness = 0.16;
+                                m.clearcoat = 1.0;
+                                m.clearcoatRoughness = 0.08;
+                            } else if (m.name === "Car_Caliper") {
+                                m.color.copy(pColor);
+                            } else if (m.name === "Car_NeonBlue" && aColor) {
+                                m.color.copy(aColor);
+                                m.emissive.copy(aColor);
+                                m.emissiveIntensity = 2.0;
+                            }
+                        });
+                    }
                 }
             });
+
+            model.scale.set(scale, scale, scale);
 
             // Calculate bounding box of scaled model
             const box = new THREE.Box3().setFromObject(model);
@@ -133,62 +181,111 @@ export async function loadVehicles(scene) {
 
             // Shift model inside wrapper so wrapper origin (0,0,0) is at exact horizontal center and bottom of tires
             model.position.set(-center.x, -box.min.y, -center.z);
-
             wrapper.add(model);
+
+            // Detect wheels for animated rotation
+            const wheels = [];
+            model.traverse((obj) => {
+                if (obj.name && obj.name.toLowerCase().includes("wheel")) {
+                    wheels.push(obj);
+                }
+            });
+
+            const initState = getCircuitState(startDistance, R, rCorner);
+            wrapper.position.set(initState.x, 0.02, initState.z);
+            wrapper.rotation.y = initState.yaw;
+
+            wrapper.userData = {
+                type,
+                distance: startDistance,
+                cruiseSpeed,
+                currentSpeed: cruiseSpeed,
+                targetSpeed: cruiseSpeed,
+                R,
+                rCorner,
+                wheels,
+                wheelRadius: type === "bus" ? 0.38 * 1.3 * scale : 0.38 * scale,
+                stopDistanceAhead: type === "bus" ? 22.0 : 16.0,
+                followDistanceAhead: type === "bus" ? 36.0 : 26.0,
+            };
+
+            vehiclesGroup.add(wrapper);
+            activeVehicles.push(wrapper);
             return wrapper;
         };
 
-        const carTemplate = createVehicle(gltfCar.scene, 0.42);
-        const busTemplate = createVehicle(gltfBus.scene, 0.45);
+        // -------------------------------------------------------------
+        // FLEET SETUP: 4 Cars & 2 Buses with diverse vibrant colors
+        // Evenly spaced along the 464.5m road circuit (interval ~77.4m)
+        // -------------------------------------------------------------
+        const vehicleConfigs = [
+            // 1. Electric Cyan Car
+            {
+                type: "car",
+                gltfScene: gltfCar.scene,
+                scale: CAR_SCALE,
+                primaryColor: 0x00d4ff,
+                accentColor: 0x00ffff,
+                startDistance: 0 * (P / 6),
+                cruiseSpeed: 10.5,
+            },
+            // 2. Metro Sapphire Blue Bus
+            {
+                type: "bus",
+                gltfScene: gltfBus.scene,
+                scale: BUS_SCALE,
+                primaryColor: 0x0284c7,
+                accentColor: 0x38bdf8,
+                startDistance: 1 * (P / 6),
+                cruiseSpeed: 10.5,
+            },
+            // 3. Velocity Crimson Red Car
+            {
+                type: "car",
+                gltfScene: gltfCar.scene,
+                scale: CAR_SCALE,
+                primaryColor: 0xff1744,
+                accentColor: 0xff5252,
+                startDistance: 2 * (P / 6),
+                cruiseSpeed: 10.5,
+            },
+            // 4. Cyber Taxi Amber Car
+            {
+                type: "car",
+                gltfScene: gltfCar.scene,
+                scale: CAR_SCALE,
+                primaryColor: 0xffaa00,
+                accentColor: 0xff9100,
+                startDistance: 3 * (P / 6),
+                cruiseSpeed: 10.5,
+            },
+            // 5. Neon Sunset Orange Bus
+            {
+                type: "bus",
+                gltfScene: gltfBus.scene,
+                scale: BUS_SCALE,
+                primaryColor: 0xff5722,
+                accentColor: 0xffd600,
+                startDistance: 4 * (P / 6),
+                cruiseSpeed: 10.5,
+            },
+            // 6. Emerald Matrix Green Car
+            {
+                type: "car",
+                gltfScene: gltfCar.scene,
+                scale: CAR_SCALE,
+                primaryColor: 0x00e676,
+                accentColor: 0x76ff03,
+                startDistance: 5 * (P / 6),
+                cruiseSpeed: 10.5,
+            },
+        ];
 
-        // Asphalt road driving lane radius R = 61.5 (tile center is 60.0; outer driving lane is ~61.5)
-        const R = 61.5;
-        const rCorner = 16.0;
+        vehicleConfigs.forEach((cfg) => createVehicleInstance(cfg));
 
-        const dummyState = getCircuitState(0, R, rCorner);
-        const P = dummyState.perimeter;
-
-        // 1. Blue City Car (North Road, heading East)
-        const CAR_SCALE = 0.42;
-        const car1 = carTemplate.clone(true);
-        const carWheels = [];
-        car1.traverse((obj) => {
-            if (obj.name && obj.name.toLowerCase().includes("wheel")) {
-                carWheels.push(obj);
-            }
-        });
-        car1.userData = {
-            speed: 12,
-            distance: 0,
-            R,
-            rCorner,
-            wheels: carWheels,
-            wheelRadius: 0.38 * CAR_SCALE,
-        };
-        vehiclesGroup.add(car1);
-        activeVehicles.push(car1);
-
-        // 2. City Bus (South Road, heading West - spaced halfway across loop)
-        const BUS_SCALE = 0.45;
-        const bus1 = busTemplate.clone(true);
-        const busWheels = [];
-        bus1.traverse((obj) => {
-            if (obj.name && obj.name.toLowerCase().includes("wheel")) {
-                busWheels.push(obj);
-            }
-        });
-        bus1.userData = {
-            speed: 10,
-            distance: P / 3,
-            R,
-            rCorner,
-            wheels: busWheels,
-            wheelRadius: 0.38 * 1.3 * BUS_SCALE,
-        };
-        vehiclesGroup.add(bus1);
-        activeVehicles.push(bus1);
-
-        // Helper to spawn a stationary parked car with customized color and position
+        // -------------------------------------------------------------
+        // Helper to spawn stationary parked cars with physics colliders
+        // -------------------------------------------------------------
         const createParkedCar = (x, y, z, color) => {
             const car = gltfCar.scene.clone(true);
             const carColor = new THREE.Color(color);
@@ -238,7 +335,7 @@ export async function loadVehicles(scene) {
             return wrapper;
         };
 
-        // 3. Parked Cars on the parking side of Modern Building (shifted to right side box)
+        // Parked Cars on the parking lot of Modern Building
         const SHIFT_X = 120;
         createParkedCar(-32 + SHIFT_X, -0.2, -26.0, 0xd61c2b);
         createParkedCar(-32 + SHIFT_X, -0.2, -20.0, 0xffff00);
@@ -252,38 +349,101 @@ export async function loadVehicles(scene) {
     return { vehiclesGroup, activeVehicles };
 }
 
-// Update vehicle positions and rotate all four tires for each moving vehicle
-export function updateVehicles(activeVehicles, delta) {
+/**
+ * Update vehicle positions, detect pedestrian & vehicle collision risks, and rotate tires
+ *
+ * @param {Array<THREE.Group>} activeVehicles
+ * @param {number} delta
+ * @param {THREE.Vector3|null} playerPos
+ */
+export function updateVehicles(activeVehicles, delta, playerPos = null) {
     if (!activeVehicles || activeVehicles.length === 0) return;
 
+    const P = activeVehicles[0].userData.P || 464.4955;
+
+    // 1. Evaluate Traffic Headway & Pedestrian Proximity for each vehicle
     activeVehicles.forEach((v) => {
         const data = v.userData;
-        const distDelta = data.speed * delta;
-        data.distance += distDelta;
+        let desiredSpeed = data.cruiseSpeed;
+
+        // --- A. Vehicle-to-Vehicle Collision Avoidance ---
+        // Find nearest vehicle ahead along the 1D circuit loop
+        let minAheadGap = Infinity;
+        let vehicleAhead = null;
+
+        for (const other of activeVehicles) {
+            if (other === v) continue;
+            const gap = ((other.userData.distance - data.distance) % P + P) % P;
+            if (gap > 0 && gap < minAheadGap) {
+                minAheadGap = gap;
+                vehicleAhead = other;
+            }
+        }
+
+        if (minAheadGap < data.stopDistanceAhead) {
+            // Immediate stop behind leading vehicle
+            desiredSpeed = 0;
+        } else if (minAheadGap < data.followDistanceAhead) {
+            // Smoothly decelerate to match leading vehicle
+            const t = (minAheadGap - data.stopDistanceAhead) / (data.followDistanceAhead - data.stopDistanceAhead);
+            const aheadSpeed = vehicleAhead ? vehicleAhead.userData.currentSpeed : 0;
+            desiredSpeed = Math.min(data.cruiseSpeed * t, aheadSpeed);
+        }
+
+        // --- B. Pedestrian / Character Collision Avoidance ("stop that thing") ---
+        if (playerPos && Math.abs(playerPos.y - v.position.y) < 8.0) {
+            const dx = playerPos.x - v.position.x;
+            const dz = playerPos.z - v.position.z;
+            const dist = Math.hypot(dx, dz);
+
+            // Circuit tangent direction at vehicle's location
+            const state = getCircuitState(data.distance, data.R, data.rCorner);
+            const tdx = state.dx;
+            const tdz = state.dz;
+
+            // Project player position onto forward heading and lateral road axis
+            const forwardDot = dx * tdx + dz * tdz;
+            const latOffset = Math.abs(dx * (-tdz) + dz * tdx);
+
+            const isBus = data.type === "bus";
+            const forwardDangerDist = isBus ? 18.0 : 14.0;
+            const closeDangerRadius = isBus ? 8.0 : 6.0;
+
+            const isPlayerAheadInLane = forwardDot > -2.0 && forwardDot < forwardDangerDist && latOffset < 4.8;
+            const isPlayerTooClose = dist < closeDangerRadius;
+
+            if (isPlayerAheadInLane || isPlayerTooClose) {
+                // Pedestrian is in front or near vehicle: vehicle stops immediately!
+                desiredSpeed = 0;
+                data.currentSpeed = 0; // Hard stop so vehicle never touches character
+            }
+        }
+
+        data.targetSpeed = desiredSpeed;
+
+        // --- C. Smooth Acceleration / Responsive Braking ---
+        if (data.targetSpeed < data.currentSpeed) {
+            // Fast responsive braking
+            data.currentSpeed = Math.max(data.targetSpeed, data.currentSpeed - 24.0 * delta);
+        } else {
+            // Gentle acceleration back up to cruising speed
+            data.currentSpeed = Math.min(data.targetSpeed, data.currentSpeed + 6.0 * delta);
+        }
+
+        // --- D. Position & Rotation along Circuit ---
+        const distDelta = data.currentSpeed * delta;
+        data.distance = (data.distance + distDelta) % P;
 
         const state = getCircuitState(data.distance, data.R, data.rCorner);
         v.position.set(state.x, 0.02, state.z);
         v.rotation.y = state.yaw;
 
-        // Lazy-detect wheels if not already assigned
-        if (!data.wheels) {
-            data.wheels = [];
-            v.traverse((obj) => {
-                if (obj.name && obj.name.toLowerCase().includes("wheel")) {
-                    data.wheels.push(obj);
-                }
-            });
-        }
-
-        // Rotate all four tires proportional to distance traveled
-        if (data.wheels && data.wheels.length > 0) {
-            const radius = data.wheelRadius || 0.16;
-            const rotAngle = distDelta / radius;
-
+        // --- E. Wheel Rotation ---
+        if (data.wheels && data.wheels.length > 0 && data.currentSpeed > 0.01) {
+            const rotAngle = distDelta / (data.wheelRadius || 0.16);
             data.wheels.forEach((wheel) => {
                 wheel.rotation.z = (wheel.rotation.z - rotAngle) % (Math.PI * 2);
             });
         }
     });
 }
-

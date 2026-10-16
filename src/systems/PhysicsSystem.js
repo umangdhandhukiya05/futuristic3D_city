@@ -35,8 +35,8 @@ export class PhysicsSystem {
     this.terminalVelocity = options.terminalVelocity || -40.0;
 
     // Player physical dimensions
-    this.playerHeight = options.playerHeight || 1.7; // Total player height in meters
-    this.capsuleRadius = options.capsuleRadius || 0.35;
+    this.playerHeight = options.playerHeight || 2.15; // Total player height in meters
+    this.capsuleRadius = options.capsuleRadius || 0.40;
     // Total capsule height = 2 * halfHeight + 2 * radius = playerHeight
     this.capsuleHalfHeight = Math.max(0.1, (this.playerHeight - 2 * this.capsuleRadius) / 2);
     // Eye offset relative to capsule geometric center
@@ -131,8 +131,8 @@ export class PhysicsSystem {
     // Handles ground detection, step climbs, sliding against colliders, and slope handling
     const offset = 0.02;
     this.characterController = this.world.createCharacterController(offset);
-    this.characterController.enableAutostep(0.45, 0.2, true); // Smoothly climb over sidewalk & curb steps
-    this.characterController.enableSnapToGround(0.35);       // Prevent jitter when descending curbs
+    this.characterController.enableAutostep(0.60, 0.25, true); // Smoothly climb over sidewalk, curb, & house porch steps
+    this.characterController.enableSnapToGround(0.45);       // Prevent jitter when descending curbs and steps
     this.characterController.setApplyImpulsesToDynamicBodies(true);
 
     // Player state tracker
@@ -321,6 +321,102 @@ export class PhysicsSystem {
       .setFriction(friction)
       .setRestitution(restitution);
     return this.world.createCollider(colDesc, body);
+  }
+
+  /**
+   * Creates a compound rigid body with multiple hollow wall colliders.
+   *
+   * @param {number} x
+   * @param {number} y
+   * @param {number} z
+   * @param {number} rotY
+   * @param {Array<{ x: number, y: number, z: number, hx: number, hy: number, hz: number }>} wallSpecs
+   * @returns {{ body: RAPIER.RigidBody, colliders: Array<RAPIER.Collider> }}
+   */
+  addHollowBuilding(x, y, z, rotY, wallSpecs) {
+    let bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z);
+    if (rotY) {
+      bodyDesc = bodyDesc.setRotation({
+        x: 0,
+        y: Math.sin(rotY / 2),
+        z: 0,
+        w: Math.cos(rotY / 2),
+      });
+    }
+    const body = this.world.createRigidBody(bodyDesc);
+    const colliders = wallSpecs.map((w) => {
+      const colDesc = RAPIER.ColliderDesc.cuboid(w.hx, w.hy, w.hz)
+        .setTranslation(w.x, w.y, w.z)
+        .setFriction(0.5)
+        .setRestitution(0.0);
+      return this.world.createCollider(colDesc, body);
+    });
+
+    return { body, colliders };
+  }
+
+  /**
+   * Adds a toggleable doorway barrier collider that can be enabled/disabled when doors open/close.
+   *
+   * @param {number} x
+   * @param {number} y
+   * @param {number} z
+   * @param {number} rotY
+   * @param {number} localX
+   * @param {number} localY
+   * @param {number} localZ
+   * @param {number} halfWidth
+   * @param {number} halfHeight
+   * @param {number} halfDepth
+   * @returns {RAPIER.Collider}
+   */
+  addDoorwayCollider(x, y, z, rotY, localX, localY, localZ, halfWidth, halfHeight, halfDepth) {
+    let bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z);
+    if (rotY) {
+      bodyDesc = bodyDesc.setRotation({
+        x: 0,
+        y: Math.sin(rotY / 2),
+        z: 0,
+        w: Math.cos(rotY / 2),
+      });
+    }
+    const body = this.world.createRigidBody(bodyDesc);
+    const colDesc = RAPIER.ColliderDesc.cuboid(halfWidth, halfHeight, halfDepth)
+      .setTranslation(localX, localY, localZ)
+      .setFriction(0.5)
+      .setRestitution(0.0);
+    return this.world.createCollider(colDesc, body);
+  }
+
+  /**
+   * Adds a kinematic position-based box collider for moving obstacles like vehicles.
+   *
+   * @param {number} x
+   * @param {number} y
+   * @param {number} z
+   * @param {number} rotY
+   * @param {number} halfWidth
+   * @param {number} halfHeight
+   * @param {number} halfDepth
+   * @returns {{ body: RAPIER.RigidBody, collider: RAPIER.Collider } | null}
+   */
+  addKinematicBox(x, y, z, rotY, halfWidth, halfHeight, halfDepth) {
+    if (!this.world) return null;
+    let bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(x, y, z);
+    if (rotY) {
+      bodyDesc = bodyDesc.setRotation({
+        x: 0,
+        y: Math.sin(rotY / 2),
+        z: 0,
+        w: Math.cos(rotY / 2),
+      });
+    }
+    const body = this.world.createRigidBody(bodyDesc);
+    const colDesc = RAPIER.ColliderDesc.cuboid(halfWidth, halfHeight, halfDepth)
+      .setFriction(0.5)
+      .setRestitution(0.0);
+    const collider = this.world.createCollider(colDesc, body);
+    return { body, collider };
   }
 
   /**

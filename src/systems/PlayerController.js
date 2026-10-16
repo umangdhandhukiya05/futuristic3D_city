@@ -53,10 +53,13 @@ export class PlayerController {
     // Camera angles & orbit boom parameters
     this.yaw = 0.0;
     this.pitch = 0.15; // Slightly elevated pitch looking down at robot in TPP
-    this.tppDistance = 3.6; // Boom arm distance behind character (meters)
-    this.minTppDistance = 1.6;
-    this.maxTppDistance = 7.0;
-    this.tppHeightOffset = 1.25; // Target height offset at robot chest
+    this.tppDistance = 4.2; // Boom arm distance behind character (meters)
+    this.targetTppDistance = 4.2;
+    this.savedTppDistance = 4.2;
+    this.isInterior = false;
+    this.minTppDistance = 1.5;
+    this.maxTppDistance = 8.5;
+    this.tppHeightOffset = 1.55; // Target height offset at robot chest (scaled for 2.15m character)
     this.mouseSensitivity = 0.0022;
     this.minPitch = -0.65; // Clamped look up (~ -37 degrees)
     this.maxPitch = 1.05;  // Clamped look down (~ +60 degrees)
@@ -128,11 +131,12 @@ export class PlayerController {
       if (this.viewMode === "tpp") {
         event.preventDefault();
         const zoomDelta = event.deltaY * 0.003;
-        this.tppDistance = THREE.MathUtils.clamp(
-          this.tppDistance + zoomDelta,
+        this.targetTppDistance = THREE.MathUtils.clamp(
+          this.targetTppDistance + zoomDelta,
           this.minTppDistance,
           this.maxTppDistance
         );
+        this.savedTppDistance = this.targetTppDistance;
       } else if (this.viewMode === "top") {
         event.preventDefault();
         const zoomAmount = event.deltaY * 0.1;
@@ -174,8 +178,8 @@ export class PlayerController {
       const rawSize = new THREE.Vector3();
       rawBox.getSize(rawSize);
 
-      // Height of capsule collider in PhysicsSystem is 1.70 meters
-      const targetHeight = this.physicsSystem.playerHeight || 1.70;
+      // Height of capsule collider in PhysicsSystem is 2.15 meters
+      const targetHeight = this.physicsSystem.playerHeight || 2.15;
       const scaleFactor = targetHeight / Math.max(0.1, rawSize.y);
 
       // 3. Create Model Wrapper with Scaled Dimensions
@@ -407,6 +411,24 @@ export class PlayerController {
   }
 
   /**
+   * Adapts camera boom distance when entering or leaving house interiors.
+   *
+   * @param {boolean} isInterior
+   */
+  setInteriorMode(isInterior) {
+    if (this.isInterior === isInterior) return;
+    this.isInterior = isInterior;
+    if (isInterior) {
+      if (this.tppDistance > 2.0) {
+        this.savedTppDistance = this.tppDistance;
+      }
+      this.targetTppDistance = 1.7;
+    } else {
+      this.targetTppDistance = this.savedTppDistance || 3.6;
+    }
+  }
+
+  /**
    * Primary controller update loop executed every animation frame.
    *
    * @param {number} delta - Frame delta in seconds
@@ -462,7 +484,7 @@ export class PlayerController {
       // 3. Synchronize Physical Body & Ground Position
       const bodyPos = this.physicsSystem.getPlayerPosition();
       const isGrounded = this.physicsSystem.isGrounded();
-      const baseFeetY = Math.max(0, bodyPos.y - this.physicsSystem.eyeOffset);
+      const baseFeetY = bodyPos.y - this.physicsSystem.eyeOffset;
       this.robotGroup.position.set(bodyPos.x, baseFeetY, bodyPos.z);
 
       // 4. Smoothly Rotate Character to Movement Heading
@@ -503,6 +525,8 @@ export class PlayerController {
 
       // 5. Update Camera Based on Active View Mode
       if (this.viewMode === "tpp") {
+        this.tppDistance = THREE.MathUtils.lerp(this.tppDistance, this.targetTppDistance, 6 * clampedDelta);
+
         // TPP: Orbit camera following behind robot
         const targetY = bodyPos.y + (this.tppHeightOffset - this.physicsSystem.eyeOffset);
         this._targetLook.set(bodyPos.x, targetY, bodyPos.z);
@@ -531,7 +555,7 @@ export class PlayerController {
 
       // Keep character feet pinned on ground
       const bodyPos = this.physicsSystem.getPlayerPosition();
-      const baseFeetY = Math.max(0, bodyPos.y - this.physicsSystem.eyeOffset);
+      const baseFeetY = bodyPos.y - this.physicsSystem.eyeOffset;
       this.robotGroup.position.set(bodyPos.x, baseFeetY, bodyPos.z);
 
       if (this.viewMode === "top") {

@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { getModelLoader } from "./modelLoader.js";
 
-export async function loadStreetLamps(scene) {
+export async function loadStreetLamps(scene, physicsSystem = null) {
   const loader = getModelLoader();
   try {
     const gltf = await loader.loadAsync("/models/props/street-lamp.glb");
@@ -128,6 +128,12 @@ export async function loadStreetLamps(scene) {
       });
 
       lampsGroup.add(lamp);
+
+      // Register vertical pole obstacle collider (radius ~ 0.30m, height ~ 5m)
+      if (physicsSystem) {
+        physicsSystem.addStaticBox(x, 2.5, z, 0.3, 2.5, 0.3);
+      }
+
       return lamp;
     };
 

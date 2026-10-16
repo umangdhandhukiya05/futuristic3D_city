@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { getModelLoader } from "./modelLoader.js";
 
-export async function loadRoads(scene) {
+export async function loadRoads(scene, physicsSystem = null) {
   const loader = getModelLoader();
   try {
     const [straightGltf, junctionGltf] = await Promise.all([
@@ -155,6 +155,51 @@ export async function loadRoads(scene) {
     }
 
     scene.add(optimizedRoadGroup);
+
+    // Register physical sidewalk elevation colliders (surface at Y = 0.42)
+    if (physicsSystem) {
+      const SIDEWALK_HY = 0.21;
+      const SW_WIDTH = 5.5; // Half width of sidewalk strip
+
+      // 1. Inner loop sidewalks (facing inner plaza blocks)
+      physicsSystem.addStaticBox(0, SIDEWALK_HY, -46.5, 80, SIDEWALK_HY, SW_WIDTH);
+      physicsSystem.addStaticBox(0, SIDEWALK_HY, 46.5, 80, SIDEWALK_HY, SW_WIDTH);
+      physicsSystem.addStaticBox(-46.5, SIDEWALK_HY, 0, SW_WIDTH, SIDEWALK_HY, 80);
+      physicsSystem.addStaticBox(46.5, SIDEWALK_HY, 0, SW_WIDTH, SIDEWALK_HY, 80);
+
+      // 2. Outer loop sidewalks (facing outer blocks)
+      physicsSystem.addStaticBox(0, SIDEWALK_HY, -73.5, 80, SIDEWALK_HY, SW_WIDTH);
+      physicsSystem.addStaticBox(0, SIDEWALK_HY, 73.5, 80, SIDEWALK_HY, SW_WIDTH);
+      physicsSystem.addStaticBox(-73.5, SIDEWALK_HY, 0, SW_WIDTH, SIDEWALK_HY, 80);
+      physicsSystem.addStaticBox(73.5, SIDEWALK_HY, 0, SW_WIDTH, SIDEWALK_HY, 80);
+
+      // 3. Extended road branch sidewalks (extending out to Z = ±240 and X = ±240)
+      const extBranchLength = 80; // half length of extension from ±80 to ±240
+      // North extensions
+      physicsSystem.addStaticBox(-73.5, SIDEWALK_HY, -160, SW_WIDTH, SIDEWALK_HY, extBranchLength);
+      physicsSystem.addStaticBox(-46.5, SIDEWALK_HY, -160, SW_WIDTH, SIDEWALK_HY, extBranchLength);
+      physicsSystem.addStaticBox(46.5, SIDEWALK_HY, -160, SW_WIDTH, SIDEWALK_HY, extBranchLength);
+      physicsSystem.addStaticBox(73.5, SIDEWALK_HY, -160, SW_WIDTH, SIDEWALK_HY, extBranchLength);
+
+      // South extensions
+      physicsSystem.addStaticBox(-73.5, SIDEWALK_HY, 160, SW_WIDTH, SIDEWALK_HY, extBranchLength);
+      physicsSystem.addStaticBox(-46.5, SIDEWALK_HY, 160, SW_WIDTH, SIDEWALK_HY, extBranchLength);
+      physicsSystem.addStaticBox(46.5, SIDEWALK_HY, 160, SW_WIDTH, SIDEWALK_HY, extBranchLength);
+      physicsSystem.addStaticBox(73.5, SIDEWALK_HY, 160, SW_WIDTH, SIDEWALK_HY, extBranchLength);
+
+      // West extensions
+      physicsSystem.addStaticBox(-160, SIDEWALK_HY, -73.5, extBranchLength, SIDEWALK_HY, SW_WIDTH);
+      physicsSystem.addStaticBox(-160, SIDEWALK_HY, -46.5, extBranchLength, SIDEWALK_HY, SW_WIDTH);
+      physicsSystem.addStaticBox(-160, SIDEWALK_HY, 46.5, extBranchLength, SIDEWALK_HY, SW_WIDTH);
+      physicsSystem.addStaticBox(-160, SIDEWALK_HY, 73.5, extBranchLength, SIDEWALK_HY, SW_WIDTH);
+
+      // East extensions
+      physicsSystem.addStaticBox(160, SIDEWALK_HY, -73.5, extBranchLength, SIDEWALK_HY, SW_WIDTH);
+      physicsSystem.addStaticBox(160, SIDEWALK_HY, -46.5, extBranchLength, SIDEWALK_HY, SW_WIDTH);
+      physicsSystem.addStaticBox(160, SIDEWALK_HY, 46.5, extBranchLength, SIDEWALK_HY, SW_WIDTH);
+      physicsSystem.addStaticBox(160, SIDEWALK_HY, 73.5, extBranchLength, SIDEWALK_HY, SW_WIDTH);
+    }
+
     return optimizedRoadGroup;
   } catch (error) {
     console.error("Error loading road models:", error);

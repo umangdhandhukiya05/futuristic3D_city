@@ -2,20 +2,22 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { getModelLoader } from "./modelLoader.js";
 
-export async function loadBuilding(scene, physicsSystem = null) {
+export async function loadBuilding(scene, physicsSystem = null, doorSystem = null) {
     const loader = getModelLoader();
     const buildingsGroup = new THREE.Group();
     buildingsGroup.name = "City_Buildings_Group";
 
     // Helper to process, scale (0.5), merge geometries by material (drastically cutting draw calls), and center horizontally at Y = 0
-    const createBuildingWrapper = (gltfScene, scale = 0.5) => {
+    const createBuildingWrapper = (gltfScene, scale = 0.5, buildingType = "solid") => {
         const model = gltfScene.clone(true);
         model.scale.set(scale, scale, scale);
         model.updateMatrixWorld(true);
 
         const matGroups = {};
+        let commonHousePlasterMat = null;
+        let houseConcreteMat = null;
 
-        // Keep all building Blender meshes (lawns, base slabs, trees, windows) visible, but skip embedded static cars
+        // Keep all building Blender meshes visible, but skip embedded static cars, boolean cutters, and interactive doors
         model.traverse((obj) => {
             if (obj.isMesh && obj.geometry) {
                 const nameLower = (obj.name || "").toLowerCase();
@@ -28,6 +30,59 @@ export async function loadBuilding(scene, physicsSystem = null) {
                 }
 
                 const fullIdent = `${nameLower} ${parentName} ${matName}`;
+
+                // 1. Exclude all Blender Boolean Cutter tool helper meshes (e.g., NormalHouse_Door_Front_Cutter)
+                if (fullIdent.includes("cutter")) {
+                    return;
+                }
+
+                // 2. Separate interactive door meshes so they remain animated and distinct
+                if (buildingType === "common-house" && (fullIdent.includes("door_front_leaf") || fullIdent.includes("front_leaf"))) {
+                    return; // Skip from static merge
+                }
+                if (buildingType === "house" && (parentName === "house_door" || nameLower === "house_door" || nameLower.startsWith("house_door_1") || nameLower.startsWith("house_door_2") || nameLower.startsWith("house_door_handle"))) {
+                    return; // Skip from static merge
+                }
+                if (buildingType === "office" && (parentName.includes("door_hinge") || nameLower.includes("door_hinge") || nameLower.includes("door_glass") || nameLower.includes("door_leaf") || parentName.includes("door_leaf"))) {
+                    return; // Skip interactive office door from static merge
+                }
+
+                // 3. For house.glb: House_Ground_Floor_Front_R is a solid wall that spans straight across the doorway.
+                // We capture its concrete material and skip the solid block; doorway cutout wall sections are created below.
+                if (buildingType === "house" && nameLower.includes("ground_floor_front_r")) {
+                    houseConcreteMat = obj.material;
+                    return;
+                }
+
+                // 4. For common-house.glb: NormalHouse_Wall_Front_Ground has solid triangles across the doorway.
+                // We carve out the doorway opening by filtering out triangles spanning across the door region (x >= 0.30 in local coords).
+                if (buildingType === "common-house" && nameLower.includes("wall_front_ground")) {
+                    commonHousePlasterMat = obj.material;
+                    const geom = obj.geometry.clone();
+                    const posAttr = geom.getAttribute("position");
+                    const indexAttr = geom.getIndex();
+                    if (posAttr && indexAttr) {
+                        const indices = indexAttr.array;
+                        const newIndices = [];
+                        for (let i = 0; i < indices.length; i += 3) {
+                            const iA = indices[i], iB = indices[i + 1], iC = indices[i + 2];
+                            const minX = Math.min(posAttr.getX(iA), posAttr.getX(iB), posAttr.getX(iC));
+                            if (minX >= 0.30) {
+                                continue; // Drop solid triangles covering the doorway and right wall
+                            }
+                            newIndices.push(iA, iB, iC);
+                        }
+                        geom.setIndex(newIndices);
+                    }
+                    geom.applyMatrix4(obj.matrixWorld);
+                    const mat = obj.material;
+                    const matKey = mat ? (mat.uuid || mat.name || "default") : "default";
+                    if (!matGroups[matKey]) {
+                        matGroups[matKey] = { material: mat, geoms: [] };
+                    }
+                    matGroups[matKey].geoms.push(geom);
+                    return;
+                }
 
                 // Compute bounding size to catch un-named embedded cars in building lots
                 const objBox = new THREE.Box3().setFromObject(obj);
@@ -110,30 +165,172 @@ export async function loadBuilding(scene, physicsSystem = null) {
 
         // Compute exact 3D bounding box of building structure to center horizontally and align base to ground level (Y = 0)
         const box = new THREE.Box3().setFromObject(mergedContainer);
+        if (box.isEmpty()) {
+            console.warn(`[loadBuilding] Model for ${buildingType} is empty.`);
+            const emptyGroup = new THREE.Group();
+            emptyGroup.userData.buildingType = buildingType;
+            return emptyGroup;
+        }
+
         const center = new THREE.Vector3();
         box.getCenter(center);
 
         const wrapper = new THREE.Group();
         mergedContainer.position.set(-center.x, -box.min.y, -center.z);
         wrapper.add(mergedContainer);
+        wrapper.userData.buildingType = buildingType;
+
+        // Attach live interactive door components and doorway wall segments aligned with the centered wrapper
+        if (buildingType === "common-house") {
+            // Add right wall segment and lintel segment with doorway opening (x: 3.35 to 5.65, y: 0.50 to 4.53) completely clear
+            const plasterMat = (Array.isArray(commonHousePlasterMat) ? commonHousePlasterMat[0] : commonHousePlasterMat)
+                || new THREE.MeshStandardMaterial({ color: 0xefefef, roughness: 0.8 });
+
+            // Right wall segment of front wall
+            const rightWall = new THREE.Mesh(new THREE.BoxGeometry(4.51, 6.00, 0.20), plasterMat);
+            rightWall.position.set(7.905, 3.00, 7.68);
+            rightWall.castShadow = true;
+            rightWall.receiveShadow = true;
+            wrapper.add(rightWall);
+
+            // Lintel wall segment above front door (doorway opening below Y = 4.53 is completely clear)
+            const lintel = new THREE.Mesh(new THREE.BoxGeometry(2.38, 1.47, 0.20), plasterMat);
+            lintel.position.set(4.49, 5.27, 7.68);
+            lintel.castShadow = true;
+            lintel.receiveShadow = true;
+            wrapper.add(lintel);
+
+            const doorLeaf = model.getObjectByName("NormalHouse_Door_Front_Leaf");
+            if (doorLeaf) {
+                const leafWorldPos = new THREE.Vector3();
+                doorLeaf.getWorldPosition(leafWorldPos);
+
+                const doorPivot = new THREE.Group();
+                doorPivot.name = "NormalHouse_Door_Front_Pivot";
+                // Place pivot at exact hinge position relative to centered building
+                doorPivot.position.set(
+                    leafWorldPos.x - center.x,
+                    leafWorldPos.y - box.min.y,
+                    leafWorldPos.z - center.z
+                );
+
+                const doorClone = doorLeaf.clone(true);
+                doorClone.position.set(0, 0, 0);
+                doorClone.scale.set(scale, scale, scale);
+                doorPivot.add(doorClone);
+                wrapper.add(doorPivot);
+            }
+        } else if (buildingType === "house") {
+            // Add surrounding wall segments around front doorway (doorway opening x: 6.50 to 10.60, y: 0.40 to 5.45 is completely clear)
+            const concreteMat = (Array.isArray(houseConcreteMat) ? houseConcreteMat[0] : houseConcreteMat)
+                || new THREE.MeshStandardMaterial({ color: 0x6e6e6e, roughness: 0.7 });
+
+            // Left wall segment
+            const leftWall = new THREE.Mesh(new THREE.BoxGeometry(1.20, 6.00, 1.50), concreteMat);
+            leftWall.position.set(5.90, 3.40, 2.95);
+            leftWall.castShadow = true;
+            leftWall.receiveShadow = true;
+            wrapper.add(leftWall);
+
+            // Right wall segment
+            const rightWall = new THREE.Mesh(new THREE.BoxGeometry(2.70, 6.00, 1.50), concreteMat);
+            rightWall.position.set(11.95, 3.40, 2.95);
+            rightWall.castShadow = true;
+            rightWall.receiveShadow = true;
+            wrapper.add(rightWall);
+
+            // Lintel segment above door (doorway below Y = 5.45 is completely open)
+            const lintel = new THREE.Mesh(new THREE.BoxGeometry(4.10, 0.95, 1.50), concreteMat);
+            lintel.position.set(8.55, 5.925, 2.95);
+            lintel.castShadow = true;
+            lintel.receiveShadow = true;
+            wrapper.add(lintel);
+
+            const doorObj = model.getObjectByName("House_Door");
+            if (doorObj) {
+                const leafWorldPos = new THREE.Vector3();
+                doorObj.getWorldPosition(leafWorldPos);
+
+                const doorPivot = new THREE.Group();
+                doorPivot.name = "House_Door_Pivot";
+                doorPivot.position.set(
+                    leafWorldPos.x - center.x,
+                    leafWorldPos.y - box.min.y,
+                    leafWorldPos.z - center.z
+                );
+
+                const dClone = doorObj.clone(true);
+                dClone.position.set(0, 0, 0);
+                dClone.scale.set(scale, scale, scale);
+                doorPivot.add(dClone);
+
+                wrapper.add(doorPivot);
+            }
+        } else if (buildingType === "office") {
+            const doorPivot = model.getObjectByName("Door_Hinge_Pivot");
+            if (doorPivot) {
+                const pivotWorldPos = new THREE.Vector3();
+                doorPivot.getWorldPosition(pivotWorldPos);
+
+                const doorPivotClone = doorPivot.clone(true);
+                doorPivotClone.name = "Office_Door_Pivot";
+                doorPivotClone.position.set(
+                    pivotWorldPos.x - center.x,
+                    pivotWorldPos.y - box.min.y,
+                    pivotWorldPos.z - center.z
+                );
+                doorPivotClone.scale.set(scale, scale, scale);
+
+                doorPivotClone.traverse((obj) => {
+                    if (obj.isMesh) {
+                        const isGlass = obj.material && (obj.material.transparent || (obj.material.name && obj.material.name.toLowerCase().includes("glass")));
+                        obj.castShadow = !isGlass;
+                        obj.receiveShadow = true;
+                    }
+                });
+
+                wrapper.add(doorPivotClone);
+            }
+
+            // Warm interior corporate illumination scaled appropriately
+            const receptionLight = new THREE.PointLight(0xffeedd, 50, 24 * scale);
+            receptionLight.position.set(0, 2.7 * scale, 9.5 * scale);
+            wrapper.add(receptionLight);
+
+            const workspaceLight = new THREE.PointLight(0xffeedd, 60, 30 * scale);
+            workspaceLight.position.set(0, 2.7 * scale, -3.0 * scale);
+            wrapper.add(workspaceLight);
+
+            const execLight = new THREE.PointLight(0xffe0cc, 35, 18 * scale);
+            execLight.position.set(4.5 * scale, 2.7 * scale, -10.5 * scale);
+            wrapper.add(execLight);
+
+            const meetingLight = new THREE.PointLight(0xffe0cc, 35, 18 * scale);
+            meetingLight.position.set(-4.5 * scale, 2.7 * scale, -10.5 * scale);
+            wrapper.add(meetingLight);
+        }
+
+        wrapper.userData.scale = scale;
         return wrapper;
     };
 
     try {
-        const [gltfModern, gltfMedium, gltfSky, gltfHouse, gltfCommonHouse] = await Promise.all([
+        const [gltfModern, gltfMedium, gltfSky, gltfHouse, gltfCommonHouse, gltfOffice] = await Promise.all([
             loader.loadAsync("/models/building/modern_building.glb"),
             loader.loadAsync("/models/building/medium-building.glb"),
             loader.loadAsync("/models/building/skyScraper_model.glb"),
             loader.loadAsync("/models/building/house.glb"),
-            loader.loadAsync("/models/building/common-house.glb")
+            loader.loadAsync("/models/building/common-house.glb"),
+            loader.loadAsync("/models/building/zignuts_office.glb")
         ]);
 
-        // Create optimized building templates (0.5 scale)
-        const templateModern = createBuildingWrapper(gltfModern.scene, 0.5);
-        const templateHouse = createBuildingWrapper(gltfHouse.scene, 0.5);
-        const templateSky = createBuildingWrapper(gltfSky.scene, 0.5);
-        const templateMedium = createBuildingWrapper(gltfMedium.scene, 0.5);
-        const templateCommonHouse = createBuildingWrapper(gltfCommonHouse.scene, 0.5);
+        // Create optimized building templates (0.5 scale for skyscrapers/houses, 0.25 scale for common-house, 1.6 scale for zignuts-office)
+        const templateModern = createBuildingWrapper(gltfModern.scene, 0.5, "solid");
+        const templateHouse = createBuildingWrapper(gltfHouse.scene, 0.5, "house");
+        const templateSky = createBuildingWrapper(gltfSky.scene, 0.5, "solid");
+        const templateMedium = createBuildingWrapper(gltfMedium.scene, 0.5, "solid");
+        const templateCommonHouse = createBuildingWrapper(gltfCommonHouse.scene, 0.25, "common-house");
+        const templateOffice = createBuildingWrapper(gltfOffice.scene, 1.6, "office");
 
         // Helper to place and orient buildings
         const placeBuilding = (template, x, z, rotY = 0, scale = 1.0) => {
@@ -145,19 +342,244 @@ export async function loadBuilding(scene, physicsSystem = null) {
             }
             buildingsGroup.add(clone);
 
+            const bType = template.userData.buildingType;
+
             if (physicsSystem) {
-                clone.updateMatrixWorld(true);
-                const box = new THREE.Box3().setFromObject(clone);
-                const size = new THREE.Vector3();
-                const center = new THREE.Vector3();
-                box.getSize(size);
-                box.getCenter(center);
-                // Keep building collider slightly inset so player can walk cleanly on adjacent sidewalks
-                const inset = 0.4;
-                const hx = Math.max(0.5, (size.x - inset) / 2);
-                const hy = Math.max(1.0, size.y / 2);
-                const hz = Math.max(0.5, (size.z - inset) / 2);
-                physicsSystem.addStaticBox(center.x, center.y, center.z, hx, hy, hz);
+                if (bType === "common-house") {
+                    // Hollow interior colliders for common-house (scale 0.25: floor & porch at Y = 0.50m)
+                    const commonHouseWalls = [
+                        // 1. Entire house foundation slab and surrounding porch (surface at exact visual floor Y = 0.50m)
+                        { x: 0, y: 0.25, z: -1.0, hx: 10.6, hy: 0.25, hz: 11.0 },
+
+                        // 2. Front entrance approach step from street level (Y = 0) up to porch (Y = 0.50m)
+                        { x: 4.5, y: 0.125, z: 10.8, hx: 3.0, hy: 0.125, hz: 0.8 },
+
+                        // 3. Interior room walls
+                        // North back wall
+                        { x: 0, y: 3.25, z: -11.5, hx: 10.1, hy: 2.75, hz: 0.2 },
+                        // West left wall
+                        { x: -10.1, y: 3.25, z: -1.9, hx: 0.2, hy: 2.75, hz: 9.6 },
+                        // East right wall
+                        { x: 10.1, y: 3.25, z: -1.9, hx: 0.2, hy: 2.75, hz: 9.6 },
+                        // South front wall (left of door: x = -10.1 to 3.5)
+                        { x: -3.3, y: 3.25, z: 7.7, hx: 6.8, hy: 2.75, hz: 0.2 },
+                        // South front wall (right of door: x = 5.5 to 10.1)
+                        { x: 7.8, y: 3.25, z: 7.7, hx: 2.3, hy: 2.75, hz: 0.2 },
+                        // Lintel above door (door height is from Y = 0.5 to Y = 4.3, lintel from 4.3 to 6.0)
+                        { x: 4.5, y: 5.15, z: 7.7, hx: 1.0, hy: 0.85, hz: 0.2 },
+                        // 4. Staircase Steps & Landing (U-shaped stairs to second floor)
+                        // Flight 1 (starts at bottom Y = 0.50m heading West up to Y = 2.92m)
+                        { x: -3.775, y: 0.42, z: -8.38, hx: 0.325, hy: 0.42, hz: 1.0 },
+                        { x: -4.425, y: 0.595, z: -8.38, hx: 0.325, hy: 0.595, hz: 1.0 },
+                        { x: -5.075, y: 0.765, z: -8.38, hx: 0.325, hy: 0.765, hz: 1.0 },
+                        { x: -5.725, y: 0.94, z: -8.38, hx: 0.325, hy: 0.94, hz: 1.0 },
+                        { x: -6.375, y: 1.115, z: -8.38, hx: 0.325, hy: 1.115, hz: 1.0 },
+                        { x: -7.025, y: 1.285, z: -8.38, hx: 0.325, hy: 1.285, hz: 1.0 },
+                        { x: -7.675, y: 1.46, z: -8.38, hx: 0.325, hy: 1.46, hz: 1.0 },
+
+                        // Landing (turnaround platform at Y = 3.26m)
+                        { x: -9.00, y: 1.63, z: -9.38, hx: 1.00, hy: 1.63, hz: 2.0 },
+
+                        // Flight 2 (heading East from landing up to second floor at Y = 5.68m)
+                        { x: -7.675, y: 1.805, z: -10.38, hx: 0.325, hy: 1.805, hz: 1.0 },
+                        { x: -7.025, y: 1.975, z: -10.38, hx: 0.325, hy: 1.975, hz: 1.0 },
+                        { x: -6.375, y: 2.15, z: -10.38, hx: 0.325, hy: 2.15, hz: 1.0 },
+                        { x: -5.725, y: 2.32, z: -10.38, hx: 0.325, hy: 2.32, hz: 1.0 },
+                        { x: -5.075, y: 2.495, z: -10.38, hx: 0.325, hy: 2.495, hz: 1.0 },
+                        { x: -4.425, y: 2.67, z: -10.38, hx: 0.325, hy: 2.67, hz: 1.0 },
+                        { x: -3.775, y: 2.84, z: -10.38, hx: 0.325, hy: 2.84, hz: 1.0 },
+
+                        // Central stair handrail divider between Flight 1 and Flight 2
+                        { x: -5.725, y: 3.5, z: -9.38, hx: 2.3, hy: 2.0, hz: 0.08 },
+
+                        // 5. Second Floor Slab (stairwell cutout at x: -10.1 to -3.45, z: -11.5 to -7.3)
+                        // South & central main upper floor (surface at Y = 6.00m)
+                        { x: 0, y: 5.95, z: 0.2, hx: 10.1, hy: 0.05, hz: 7.5 },
+                        // North-East upper floor (beside stairwell opening)
+                        { x: 3.325, y: 5.95, z: -9.4, hx: 6.775, hy: 0.05, hz: 2.1 },
+                        // South upper balcony floor (extends from Z = 7.7m to 12.0m)
+                        { x: 0, y: 5.95, z: 9.85, hx: 10.1, hy: 0.05, hz: 2.15 },
+
+                        // 6. Second Floor Perimeter Walls & Railings
+                        // Upper North back wall
+                        { x: 0, y: 8.75, z: -11.5, hx: 10.1, hy: 2.75, hz: 0.2 },
+                        // Upper West left wall
+                        { x: -10.1, y: 8.75, z: -1.9, hx: 0.2, hy: 2.75, hz: 9.6 },
+                        // Upper East right wall
+                        { x: 10.1, y: 8.75, z: -1.9, hx: 0.2, hy: 2.75, hz: 9.6 },
+                        // Upper South front wall with double balcony door opening (X = -1.25 to 2.75)
+                        { x: -5.675, y: 8.75, z: 7.7, hx: 4.425, hy: 2.75, hz: 0.2 },
+                        { x: 6.425, y: 8.75, z: 7.7, hx: 3.675, hy: 2.75, hz: 0.2 },
+                        { x: 0.75, y: 10.825, z: 7.7, hx: 2.0, hy: 0.675, hz: 0.2 },
+                        // Upper Balcony Railings (matching visual railing height and perimeter)
+                        { x: 0, y: 7.25, z: 12.0, hx: 10.1, hy: 1.25, hz: 0.1 },
+                        { x: -10.1, y: 7.25, z: 9.85, hx: 0.1, hy: 1.25, hz: 2.15 },
+                        { x: 10.1, y: 7.25, z: 9.85, hx: 0.1, hy: 1.25, hz: 2.15 },
+                        // Second floor stairwell guardrail (prevents falling back into stairwell)
+                        { x: -6.775, y: 6.5, z: -7.3, hx: 3.325, hy: 0.5, hz: 0.1 },
+
+                        // 7. Roof ceiling above second floor (height Y = 12.0m matching roof underside)
+                        { x: 0, y: 12.0, z: -1.9, hx: 10.1, hy: 0.1, hz: 9.6 },
+                    ];
+                    physicsSystem.addHollowBuilding(x, 0, z, rotY, commonHouseWalls);
+
+                    const doorGroup = clone.getObjectByName("NormalHouse_Door_Front_Pivot");
+                    if (doorSystem && doorGroup) {
+                        const doorCol = physicsSystem.addDoorwayCollider(
+                            x, 0, z, rotY,
+                            4.5, 2.4, 7.7,
+                            1.0, 1.9, 0.2
+                        );
+                        doorSystem.registerDoor({
+                            id: `door_common_${doorSystem.doors.length + 1}`,
+                            buildingType: "common-house",
+                            buildingGroup: clone,
+                            doorGroup: doorGroup,
+                            doorCollider: doorCol,
+                            openAngle: -Math.PI / 2, // swings inward into room
+                            closedAngle: 0,
+                            localHingePos: doorGroup.position.clone(),
+                            localInteriorBounds: new THREE.Box3(
+                                new THREE.Vector3(-9.75, 0.4, -11.25),
+                                new THREE.Vector3(9.75, 12.2, 12.0)
+                            ),
+                        });
+                    }
+                } else if (bType === "house") {
+                    // Hollow interior colliders and exterior terrace/sidewalk slab for house.glb
+                    const houseWalls = [
+                        // 1. Entire house foundation slab, front terrace paving, and sidewalk (surface at Y = 0.55m)
+                        { x: 0, y: 0.275, z: 0, hx: 19.2, hy: 0.275, hz: 16.7 },
+
+                        // 2. Approach perimeter step from street level (Y = 0) up to sidewalk slab (Y = 0.55m)
+                        { x: 0, y: 0.14, z: 17.5, hx: 19.2, hy: 0.14, hz: 0.8 },
+
+                        // 3. Interior room walls (North back wall)
+                        { x: -0.7, y: 3.5, z: -13.3, hx: 14.0, hy: 3.0, hz: 0.3 },
+                        // West left wall
+                        { x: -14.7, y: 3.5, z: -4.8, hx: 0.3, hy: 3.0, hz: 8.5 },
+                        // East right wall
+                        { x: 13.3, y: 3.5, z: -4.8, hx: 0.3, hy: 3.0, hz: 8.5 },
+                        // South front wall (left of door: x = -14.7 to 6.5)
+                        { x: -4.1, y: 3.5, z: 3.65, hx: 10.6, hy: 3.0, hz: 0.3 },
+                        // South front wall (right of door: x = 10.6 to 13.3)
+                        { x: 11.95, y: 3.5, z: 3.65, hx: 1.35, hy: 3.0, hz: 0.3 },
+                        // Lintel above door (door is Y = 0.55 to 5.1, lintel from 5.1 to 6.5)
+                        { x: 8.55, y: 5.8, z: 3.65, hx: 1.75, hy: 0.7, hz: 0.3 },
+                        // Ceiling
+                        { x: -0.7, y: 6.5, z: -4.8, hx: 14.0, hy: 0.1, hz: 8.5 },
+
+                        // 4. Exterior architectural columns supporting front canopy (Z = 6.6)
+                        { x: -7.0, y: 3.4, z: 6.6, hx: 0.45, hy: 3.0, hz: 0.45 },
+                        { x: -0.5, y: 3.4, z: 6.6, hx: 0.45, hy: 3.0, hz: 0.45 },
+                        { x: 5.5, y: 3.4, z: 6.6, hx: 0.45, hy: 3.0, hz: 0.45 },
+                        { x: 12.0, y: 3.4, z: 6.6, hx: 0.45, hy: 3.0, hz: 0.45 },
+                        { x: 16.0, y: 3.4, z: 6.6, hx: 0.45, hy: 3.0, hz: 0.45 },
+
+                        // 5. Exterior decorative bollards lining walkway
+                        { x: 4.8, y: 1.0, z: 11.2, hx: 0.3, hy: 0.6, hz: 2.2 },
+                        { x: 12.2, y: 1.0, z: 11.2, hx: 0.3, hy: 0.6, hz: 2.2 },
+                    ];
+                    physicsSystem.addHollowBuilding(x, 0, z, rotY, houseWalls);
+
+                    const doorGroup = clone.getObjectByName("House_Door_Pivot");
+                    if (doorSystem && doorGroup) {
+                        const doorCol = physicsSystem.addDoorwayCollider(
+                            x, 0, z, rotY,
+                            8.55, 2.825, 3.65,
+                            1.75, 2.275, 0.2
+                        );
+                        doorSystem.registerDoor({
+                            id: `door_house_${doorSystem.doors.length + 1}`,
+                            buildingType: "house",
+                            buildingGroup: clone,
+                            doorGroup: doorGroup,
+                            doorCollider: doorCol,
+                            openAngle: -Math.PI / 2, // swings inward
+                            closedAngle: 0,
+                            localHingePos: doorGroup.position.clone(),
+                            localInteriorBounds: new THREE.Box3(
+                                new THREE.Vector3(-14.0, 0.4, -13.0),
+                                new THREE.Vector3(13.0, 6.0, 3.5)
+                            ),
+                        });
+                    }
+                } else if (bType === "office") {
+                    const osc = template.userData.scale || 1.6;
+                    // Hollow interior colliders for Zignuts Office scaled to match building scale
+                    const officeWalls = [
+                        // 1. Floor & Ceiling Slabs
+                        { x: 0, y: 0.00 * osc, z: 0, hx: 6.70 * osc, hy: 0.05 * osc, hz: 13.20 * osc },
+                        { x: 0, y: 3.35 * osc, z: 0, hx: 6.70 * osc, hy: 0.10 * osc, hz: 13.20 * osc },
+
+                        // 2. Perimeter Walls
+                        // North Back Wall (Z = -13.10)
+                        { x: 0, y: 1.70 * osc, z: -13.10 * osc, hx: 6.70 * osc, hy: 1.65 * osc, hz: 0.20 * osc },
+                        // South Front Wall (Z = +13.10)
+                        { x: 0, y: 1.70 * osc, z: 13.10 * osc, hx: 6.70 * osc, hy: 1.65 * osc, hz: 0.20 * osc },
+                        // East Right Wall (X = +6.60)
+                        { x: 6.60 * osc, y: 1.70 * osc, z: 0, hx: 0.20 * osc, hy: 1.65 * osc, hz: 13.20 * osc },
+
+                        // West Left Wall (doorway opening at Z: 6.53 to 7.77, Y: 0.05 to 2.52)
+                        // Section North of entrance door
+                        { x: -6.60 * osc, y: 1.70 * osc, z: -3.31 * osc, hx: 0.20 * osc, hy: 1.65 * osc, hz: 9.84 * osc },
+                        // Section South of entrance door
+                        { x: -6.60 * osc, y: 1.70 * osc, z: 10.46 * osc, hx: 0.20 * osc, hy: 1.65 * osc, hz: 2.69 * osc },
+                        // Lintel above entrance door
+                        { x: -6.60 * osc, y: 2.935 * osc, z: 7.15 * osc, hx: 0.20 * osc, hy: 0.415 * osc, hz: 0.62 * osc },
+
+                        // 3. Internal Partition Wall (Z = 6.00m, central opening X: [-1.33, 1.33])
+                        { x: -3.99 * osc, y: 1.70 * osc, z: 6.00 * osc, hx: 2.66 * osc, hy: 1.65 * osc, hz: 0.10 * osc },
+                        { x: 3.99 * osc, y: 1.70 * osc, z: 6.00 * osc, hx: 2.66 * osc, hy: 1.65 * osc, hz: 0.10 * osc },
+                        { x: 0, y: 3.075 * osc, z: 6.00 * osc, hx: 1.33 * osc, hy: 0.275 * osc, hz: 0.10 * osc },
+
+                        // 4. Key Furniture Colliders
+                        // Reception Counter
+                        { x: 0, y: 0.60 * osc, z: 11.20 * osc, hx: 1.75 * osc, hy: 0.60 * osc, hz: 0.45 * osc },
+                        // Executive Desk
+                        { x: 4.56 * osc, y: 0.45 * osc, z: -11.50 * osc, hx: 1.60 * osc, hy: 0.45 * osc, hz: 0.80 * osc },
+                        // Meeting Table
+                        { x: -4.44 * osc, y: 0.45 * osc, z: -10.70 * osc, hx: 1.50 * osc, hy: 0.45 * osc, hz: 0.60 * osc },
+                    ];
+                    physicsSystem.addHollowBuilding(x, 0, z, rotY, officeWalls);
+
+                    const doorGroup = clone.getObjectByName("Office_Door_Pivot");
+                    if (doorSystem && doorGroup) {
+                        const doorCol = physicsSystem.addDoorwayCollider(
+                            x, 0, z, rotY,
+                            -6.65 * osc, 1.285 * osc, 7.15 * osc,
+                            0.20 * osc, 1.235 * osc, 0.62 * osc
+                        );
+                        doorSystem.registerDoor({
+                            id: `door_office_${doorSystem.doors.length + 1}`,
+                            buildingType: "office",
+                            buildingGroup: clone,
+                            doorGroup: doorGroup,
+                            doorCollider: doorCol,
+                            openAngle: -Math.PI / 2, // swings open matching Blender action
+                            closedAngle: 0,
+                            localHingePos: doorGroup.position.clone(),
+                            localInteriorBounds: new THREE.Box3(
+                                new THREE.Vector3(-6.8 * osc, 0.0, -13.3 * osc),
+                                new THREE.Vector3(6.8 * osc, 3.6 * osc, 13.3 * osc)
+                            ),
+                        });
+                    }
+                } else {
+                    // Standard solid box collider for skyscrapers and commercial towers
+                    clone.updateMatrixWorld(true);
+                    const box = new THREE.Box3().setFromObject(clone);
+                    const size = new THREE.Vector3();
+                    const center = new THREE.Vector3();
+                    box.getSize(size);
+                    box.getCenter(center);
+                    // Keep building collider slightly inset so player can walk cleanly on adjacent sidewalks
+                    const inset = 0.4;
+                    const hx = Math.max(0.5, (size.x - inset) / 2);
+                    const hy = Math.max(1.0, size.y / 2);
+                    const hz = Math.max(0.5, (size.z - inset) / 2);
+                    physicsSystem.addStaticBox(center.x, center.y, center.z, hx, hy, hz);
+                }
             }
 
             return clone;
@@ -171,7 +593,8 @@ export async function loadBuilding(scene, physicsSystem = null) {
         placeBuilding(templateSky, 95.7, 24.75, 0);
         placeBuilding(templateMedium, 148.45, -30, Math.PI / 2);
         placeBuilding(templateMedium, 148.45, -8.35, Math.PI / 2);
-        placeBuilding(templateCommonHouse, 190.0, -25.8, Math.PI / 2);
+        // Zignuts Office placed in this compartment with 1.6x increased scale
+        placeBuilding(templateOffice, 182.0, 0, 0);
 
         // ========================================================
         // 2. WEST BLOCK (Center: X = -120, Z = 0)

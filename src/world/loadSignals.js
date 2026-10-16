@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { getModelLoader } from "./modelLoader.js";
 
-export async function loadSignals(scene) {
+export async function loadSignals(scene, physicsSystem = null) {
   const loader = getModelLoader();
   try {
     const gltf = await loader.loadAsync("/models/props/signal.glb");
@@ -62,6 +62,12 @@ export async function loadSignals(scene) {
       signal.rotation.y = rotY;
 
       signalsGroup.add(signal);
+
+      // Register vertical signal post obstacle collider (radius ~ 0.35m, height ~ 6.0m)
+      if (physicsSystem) {
+        physicsSystem.addStaticBox(x, 3.0, z, 0.35, 3.0, 0.35);
+      }
+
       return signal;
     };
 

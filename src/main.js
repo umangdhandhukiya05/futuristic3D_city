@@ -6,6 +6,7 @@ import { getModelLoader } from "./world/modelLoader.js";
 import { DayNightSystem } from "./systems/DayNightSystem.js";
 import { PhysicsSystem } from "./systems/PhysicsSystem.js";
 import { PlayerController } from "./systems/PlayerController.js";
+import { BuildingDoorSystem } from "./systems/BuildingDoorSystem.js";
 import { createLand } from "./world/createLand.js";
 import { createEnvironment } from "./world/createEnvironment.js";
 import { loadRoads } from "./world/loadRoads.js";
@@ -39,7 +40,7 @@ createEnvironment(scene);
 // Movement tuning constants
 const WALK_SPEED = 8.0;
 const SPRINT_SPEED = 14.0;
-const PLAYER_HEIGHT = 1.70;
+const PLAYER_HEIGHT = 2.15;
 
 // Player starting spawn position in the central pedestrian plaza
 const spawnPos = new THREE.Vector3(0, PLAYER_HEIGHT, 24);
@@ -48,6 +49,7 @@ const spawnPos = new THREE.Vector3(0, PLAYER_HEIGHT, 24);
 const physicsSystem = await PhysicsSystem.create({
   initialPosition: spawnPos,
   playerHeight: PLAYER_HEIGHT,
+  capsuleRadius: 0.40,
   walkSpeed: WALK_SPEED,
   sprintSpeed: SPRINT_SPEED,
   jumpSpeed: 5.5,
@@ -62,6 +64,13 @@ const playerController = new PlayerController({
   domElement: renderer.domElement,
   initialMode: "tpp", // Default to TPP with the robot model visible as requested
   onModeChange: (mode) => updateHudView(mode),
+});
+
+// Initialize Building Door System (interactive front doors for common-house and house)
+const doorSystem = new BuildingDoorSystem({
+  physicsSystem,
+  playerController,
+  domContainer: container,
 });
 
 // Load and setup the robot character model
@@ -97,9 +106,9 @@ function updateHudView(mode) {
   btnIso.classList.toggle("active", mode === "isometric");
 
   if (mode === "tpp") {
-    instructions.textContent = "STEP 2 CONTROLLER (TPP) | Click — Mouse Look | WASD — Walk | Shift — Run | Space — Jump | H — Hi-Five | Scroll — Zoom | [V] Camera";
+    instructions.textContent = "STEP 2 CONTROLLER (TPP) | Click — Mouse Look | WASD — Walk | Shift — Run | Space — Jump | E — Door | H — Hi-Five | Scroll — Zoom | [V] Camera";
   } else if (mode === "fpp") {
-    instructions.textContent = "STEP 2 CONTROLLER (FPP) | Click — Mouse Look | WASD — Move | Shift — Sprint | Space — Jump | [3] Third Person | [V] Camera";
+    instructions.textContent = "STEP 2 CONTROLLER (FPP) | Click — Mouse Look | WASD — Move | Shift — Sprint | Space — Jump | E — Door | [3] Third Person | [V] Camera";
   } else if (mode === "top") {
     instructions.textContent = "TOP OVERVIEW | WASD / Arrows — Pan | Scroll / Q / E — Zoom | [3] TPP Robot | [2] First Person";
   } else if (mode === "isometric") {
@@ -166,13 +175,13 @@ let activeVehicles = [];
 
 // Load roads, buildings, street lamps, benches, glass dome & vehicles
 try {
-  await loadRoads(scene);
-  await loadBuilding(scene, physicsSystem); // Registers static building colliders in physics
-  await loadStreetLamps(scene);
-  await loadBenches(scene);
-  await loadSignals(scene);
-  await loadGlassDome(scene);
-  const vehicleData = await loadVehicles(scene);
+  await loadRoads(scene, physicsSystem);
+  await loadBuilding(scene, physicsSystem, doorSystem); // Registers building & hollow house colliders
+  await loadStreetLamps(scene, physicsSystem);
+  await loadBenches(scene, physicsSystem);
+  await loadSignals(scene, physicsSystem);
+  await loadGlassDome(scene, physicsSystem);
+  const vehicleData = await loadVehicles(scene, physicsSystem);
   if (vehicleData && vehicleData.activeVehicles) {
     activeVehicles = vehicleData.activeVehicles;
   }
@@ -192,14 +201,18 @@ function animate() {
   // Update day/night celestial cycle and atmosphere
   dayNightSystem.update(delta);
 
-  // Update vehicle traffic along road circuit
-  updateVehicles(activeVehicles, delta);
+  // Update vehicle traffic along road circuit with pedestrian & vehicle collision avoidance
+  const characterPos = playerController?.robotGroup?.position || (physicsSystem ? physicsSystem.getPlayerPosition() : null);
+  updateVehicles(activeVehicles, delta, characterPos);
 
   // Update glass dome animation mixer (pulsating energy core & gyroscopic orbit rings)
   updateGlassDome(delta);
 
   // Update Player Controller (capsule physics, WASD, mouse look, robot procedural locomotion, camera)
   playerController.update(delta, keys);
+
+  // Update Interactive Building Doors & Proximity Prompts
+  doorSystem.update(delta, physicsSystem.getPlayerPosition(), keys);
 
   renderer.render(scene, camera);
 }

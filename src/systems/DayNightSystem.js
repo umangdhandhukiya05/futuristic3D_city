@@ -557,7 +557,8 @@ export class DayNightSystem {
             matName.includes("mb_warmwindow") ||
             matName.includes("mb_beacon") ||
             matName.includes("tower_neoncyan") ||
-            matName.includes("house_neon")
+            matName.includes("house_neon") ||
+            matName.includes("glow")
           ) {
             if (!buildingMats.has(mat)) {
               buildingMats.add(mat);
