@@ -101,6 +101,57 @@ export function getCircuitState(distance, R = 61.5, rCorner = 16.0) {
     return { x, z, yaw, perimeter, dx, dz };
 }
 
+/**
+ * Extracts unified triangular mesh vertex and index buffers from a 3D model hierarchy
+ * in the root group's local coordinate space for exact Rapier trimesh collision.
+ *
+ * @param {THREE.Group} rootGroup
+ * @returns {{ vertices: Float32Array, indices: Uint32Array }}
+ */
+function extractVehicleMeshData(rootGroup) {
+    rootGroup.updateMatrixWorld(true);
+    const invRoot = rootGroup.matrixWorld.clone().invert();
+    const allVertices = [];
+    const allIndices = [];
+    let vertexOffset = 0;
+
+    rootGroup.traverse((obj) => {
+        if (obj.isMesh && obj.geometry) {
+            const geom = obj.geometry;
+            const posAttr = geom.getAttribute("position");
+            if (!posAttr) return;
+
+            // Transform each vertex by the mesh's relative transform inside the root group
+            const m = new THREE.Matrix4().multiplyMatrices(invRoot, obj.matrixWorld);
+            const v = new THREE.Vector3();
+
+            for (let i = 0; i < posAttr.count; i++) {
+                v.fromBufferAttribute(posAttr, i);
+                v.applyMatrix4(m);
+                allVertices.push(v.x, v.y, v.z);
+            }
+
+            if (geom.index) {
+                const indexAttr = geom.index;
+                for (let i = 0; i < indexAttr.count; i++) {
+                    allIndices.push(indexAttr.getX(i) + vertexOffset);
+                }
+            } else {
+                for (let i = 0; i < posAttr.count; i++) {
+                    allIndices.push(i + vertexOffset);
+                }
+            }
+
+            vertexOffset += posAttr.count;
+        }
+    });
+
+    return {
+        vertices: new Float32Array(allVertices),
+        indices: new Uint32Array(allIndices),
+    };
+}
+
 export async function loadVehicles(scene, physicsSystem = null) {
     const loader = getModelLoader();
     const vehiclesGroup = new THREE.Group();
@@ -123,8 +174,31 @@ export async function loadVehicles(scene, physicsSystem = null) {
         const dummyState = getCircuitState(0, R, rCorner);
         const P = dummyState.perimeter;
 
+        // Create base prototypes to extract exact 3D mesh collider geometry
+        const createPrototype = (gltfScene, scale) => {
+            const wrapper = new THREE.Group();
+            const model = gltfScene.clone(true);
+            model.scale.set(scale, scale, scale);
+            const box = new THREE.Box3().setFromObject(model);
+            const center = new THREE.Vector3();
+            box.getCenter(center);
+            model.position.set(-center.x, -box.min.y, -center.z);
+            wrapper.add(model);
+            return wrapper;
+        };
+
+        const carProto = createPrototype(gltfCar.scene, CAR_SCALE);
+        const busProto = createPrototype(gltfBus.scene, BUS_SCALE);
+
+        // Precompute exact 3D mesh collider geometry buffers
+        const carMeshData = extractVehicleMeshData(carProto);
+        const busMeshData = extractVehicleMeshData(busProto);
+
+        const carCoreBox = { hx: 0.95, hy: 0.85, hz: 0.45, cy: 0.85 };
+        const busCoreBox = { hx: 2.70, hy: 1.50, hz: 0.85, cy: 1.50 };
+
         /**
-         * Helper to instantiate a customized vehicle with individual paint color and optional physics body
+         * Helper to instantiate a customized vehicle with individual paint color and exact mesh collider
          */
         const createVehicleInstance = ({
             type,
@@ -195,6 +269,26 @@ export async function loadVehicles(scene, physicsSystem = null) {
             wrapper.position.set(initState.x, 0.02, initState.z);
             wrapper.rotation.y = initState.yaw;
 
+            // Attach exact 3D mesh collider to physically block character from wheels, fenders, and doors
+            const meshData = type === "bus" ? busMeshData : carMeshData;
+            const coreBox = type === "bus" ? busCoreBox : carCoreBox;
+
+            let physicsBody = null;
+            if (physicsSystem && typeof physicsSystem.addVehicleMeshCollider === "function") {
+                const kin = physicsSystem.addVehicleMeshCollider(
+                    initState.x,
+                    0.02,
+                    initState.z,
+                    initState.yaw,
+                    meshData.vertices,
+                    meshData.indices,
+                    coreBox
+                );
+                if (kin) {
+                    physicsBody = kin.body;
+                }
+            }
+
             wrapper.userData = {
                 type,
                 distance: startDistance,
@@ -205,6 +299,7 @@ export async function loadVehicles(scene, physicsSystem = null) {
                 rCorner,
                 wheels,
                 wheelRadius: type === "bus" ? 0.38 * 1.3 * scale : 0.38 * scale,
+                physicsBody,
                 stopDistanceAhead: type === "bus" ? 22.0 : 16.0,
                 followDistanceAhead: type === "bus" ? 36.0 : 26.0,
             };
@@ -284,7 +379,7 @@ export async function loadVehicles(scene, physicsSystem = null) {
         vehicleConfigs.forEach((cfg) => createVehicleInstance(cfg));
 
         // -------------------------------------------------------------
-        // Helper to spawn stationary parked cars with physics colliders
+        // Helper to spawn stationary parked cars with exact mesh colliders
         // -------------------------------------------------------------
         const createParkedCar = (x, y, z, color) => {
             const car = gltfCar.scene.clone(true);
@@ -332,6 +427,17 @@ export async function loadVehicles(scene, physicsSystem = null) {
             wrapper.rotation.y = 0;
 
             vehiclesGroup.add(wrapper);
+
+            // Add static 3D mesh collider so character can never walk through parked cars
+            if (physicsSystem && typeof physicsSystem.addStaticVehicleMesh === "function") {
+                physicsSystem.addStaticVehicleMesh(
+                    x, y, z, 0,
+                    carMeshData.vertices,
+                    carMeshData.indices,
+                    carCoreBox
+                );
+            }
+
             return wrapper;
         };
 
@@ -443,6 +549,21 @@ export function updateVehicles(activeVehicles, delta, playerPos = null) {
             const rotAngle = distDelta / (data.wheelRadius || 0.16);
             data.wheels.forEach((wheel) => {
                 wheel.rotation.z = (wheel.rotation.z - rotAngle) % (Math.PI * 2);
+            });
+        }
+
+        // --- F. Synchronize Kinematic 3D Mesh Collider with Vehicle Motion ---
+        if (data.physicsBody) {
+            data.physicsBody.setNextKinematicTranslation({
+                x: state.x,
+                y: 0.02,
+                z: state.z,
+            });
+            data.physicsBody.setNextKinematicRotation({
+                x: 0,
+                y: Math.sin(state.yaw / 2),
+                z: 0,
+                w: Math.cos(state.yaw / 2),
             });
         }
     });

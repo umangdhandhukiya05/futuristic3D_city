@@ -13,7 +13,7 @@ export async function loadStreetLamps(scene, physicsSystem = null) {
     const matGroups = {};
     const POLE_BASE_X = 20.654;
     const POLE_BASE_Z = 52.793;
-    const MIN_BASE_Y = 0.289;
+    const MIN_BASE_Y = 1.475; // Exact base flange bottom elevation (eliminates hovering gap)
 
     // 1. Lamp Head Light Bulb Material (ONLY this glows at night)
     const bulbMaterial = new THREE.MeshStandardMaterial({
@@ -142,44 +142,44 @@ export async function loadStreetLamps(scene, physicsSystem = null) {
     // 1. NORTH ROAD (Z_center = -60)
     straightOffsets.forEach((x, i) => {
       // Outer sidewalk (facing South +Z towards road)
-      createLampInstance(x, -76.5, Math.PI / 2, i % 2 === 0);
+      createLampInstance(x, -76.3, Math.PI / 2, i % 2 === 0);
       // Inner sidewalk (facing North -Z towards road)
-      createLampInstance(x, -43.5, -Math.PI / 2, i % 2 === 1);
+      createLampInstance(x, -43.7, -Math.PI / 2, i % 2 === 1);
     });
 
     // 2. SOUTH ROAD (Z_center = +60)
     straightOffsets.forEach((x, i) => {
       // Inner sidewalk (facing South +Z towards road)
-      createLampInstance(x, 43.5, Math.PI / 2, i % 2 === 0);
+      createLampInstance(x, 43.7, Math.PI / 2, i % 2 === 0);
       // Outer sidewalk (facing North -Z towards road)
-      createLampInstance(x, 76.5, -Math.PI / 2, i % 2 === 1);
+      createLampInstance(x, 76.3, -Math.PI / 2, i % 2 === 1);
     });
 
     // 3. WEST ROAD (X_center = -60)
     straightOffsets.forEach((z, i) => {
       // Outer sidewalk (facing East +X towards road)
-      createLampInstance(-76.5, z, 0, i % 2 === 0);
+      createLampInstance(-76.3, z, 0, i % 2 === 0);
       // Inner sidewalk (facing West -X towards road)
-      createLampInstance(-43.5, z, Math.PI, i % 2 === 1);
+      createLampInstance(-43.7, z, Math.PI, i % 2 === 1);
     });
 
     // 4. EAST ROAD (X_center = +60)
     straightOffsets.forEach((z, i) => {
       // Inner sidewalk (facing East +X towards road)
-      createLampInstance(43.5, z, 0, i % 2 === 0);
+      createLampInstance(43.7, z, 0, i % 2 === 0);
       // Outer sidewalk (facing West -X towards road)
-      createLampInstance(76.5, z, Math.PI, i % 2 === 1);
+      createLampInstance(76.3, z, Math.PI, i % 2 === 1);
     });
 
     // 5. FOUR INTERSECTION CORNERS
     // NE intersection outer corner
-    createLampInstance(76.5, -76.5, (-3 * Math.PI) / 4, true);
+    createLampInstance(76.3, -76.3, (-3 * Math.PI) / 4, true);
     // NW intersection outer corner
-    createLampInstance(-76.5, -76.5, -Math.PI / 4, true);
+    createLampInstance(-76.3, -76.3, -Math.PI / 4, true);
     // SE intersection outer corner
-    createLampInstance(76.5, 76.5, (3 * Math.PI) / 4, true);
+    createLampInstance(76.3, 76.3, (3 * Math.PI) / 4, true);
     // SW intersection outer corner
-    createLampInstance(-76.5, 76.5, Math.PI / 4, true);
+    createLampInstance(-76.3, 76.3, Math.PI / 4, true);
 
     // 6. EXTENDED ROADS STREET LAMPS (along all 8 branches up to road end at 240)
     const extOffsets = [95, 115, 135, 155, 175, 195, 215, 235];

@@ -186,16 +186,16 @@ export async function loadBuilding(scene, physicsSystem = null, doorSystem = nul
             const plasterMat = (Array.isArray(commonHousePlasterMat) ? commonHousePlasterMat[0] : commonHousePlasterMat)
                 || new THREE.MeshStandardMaterial({ color: 0xefefef, roughness: 0.8 });
 
-            // Right wall segment of front wall
-            const rightWall = new THREE.Mesh(new THREE.BoxGeometry(4.51, 6.00, 0.20), plasterMat);
-            rightWall.position.set(7.905, 3.00, 7.68);
+            // Right wall segment of front wall (spans from x: 5.95 to east wall at x: 10.60, closing corner gap)
+            const rightWall = new THREE.Mesh(new THREE.BoxGeometry(4.65, 6.00, 0.20), plasterMat);
+            rightWall.position.set(8.275, 3.00, 7.72);
             rightWall.castShadow = true;
             rightWall.receiveShadow = true;
             wrapper.add(rightWall);
 
-            // Lintel wall segment above front door (doorway opening below Y = 4.53 is completely clear)
-            const lintel = new THREE.Mesh(new THREE.BoxGeometry(2.38, 1.47, 0.20), plasterMat);
-            lintel.position.set(4.49, 5.27, 7.68);
+            // Lintel wall segment above front door (spans from x: 3.70 to x: 6.05, y: 4.50 to 6.00)
+            const lintel = new THREE.Mesh(new THREE.BoxGeometry(2.35, 1.50, 0.20), plasterMat);
+            lintel.position.set(4.875, 5.25, 7.72);
             lintel.castShadow = true;
             lintel.receiveShadow = true;
             wrapper.add(lintel);
@@ -220,6 +220,62 @@ export async function loadBuilding(scene, physicsSystem = null, doorSystem = nul
                 doorPivot.add(doorClone);
                 wrapper.add(doorPivot);
             }
+
+            // Extract exact 3D triangular mesh geometry for all interior furniture, props, and stairs
+            const allVertices = [];
+            const allIndices = [];
+            let vertexOffset = 0;
+            const offset = new THREE.Vector3(-center.x, -box.min.y, -center.z);
+
+            model.traverse((obj) => {
+                if (obj.isMesh && obj.geometry) {
+                    const nameLower = (obj.name || "").toLowerCase();
+                    const parentName = (obj.parent && obj.parent.name || "").toLowerCase();
+                    const fullIdent = `${nameLower} ${parentName}`;
+
+                    // Exclude cutters, structural walls, floors, roofs, floor rugs/mats, interactive door leaf, ceiling pendants
+                    if (fullIdent.includes("cutter")) return;
+                    if (nameLower.startsWith("normalhouse_wall_") ||
+                        nameLower.startsWith("normalhouse_walls_") ||
+                        nameLower.startsWith("normalhouse_floor_") ||
+                        nameLower.startsWith("normalhouse_roof")) return;
+                    if (fullIdent.includes("rug") || fullIdent.includes("mat")) return;
+                    if (fullIdent.includes("door_front_leaf") || fullIdent.includes("front_leaf")) return;
+                    if (fullIdent.includes("bar_pendants")) return;
+
+                    const geom = obj.geometry.clone();
+                    geom.applyMatrix4(obj.matrixWorld);
+
+                    const pos = geom.getAttribute("position");
+                    const idxAttr = geom.getIndex();
+                    if (!pos || pos.count < 3) return;
+
+                    const baseIndex = vertexOffset;
+                    for (let i = 0; i < pos.count; i++) {
+                        allVertices.push(
+                            pos.getX(i) + offset.x,
+                            pos.getY(i) + offset.y,
+                            pos.getZ(i) + offset.z
+                        );
+                    }
+                    vertexOffset += pos.count;
+
+                    if (idxAttr) {
+                        for (let i = 0; i < idxAttr.count; i++) {
+                            allIndices.push(baseIndex + idxAttr.getX(i));
+                        }
+                    } else {
+                        for (let i = 0; i < pos.count; i++) {
+                            allIndices.push(baseIndex + i);
+                        }
+                    }
+                }
+            });
+
+            wrapper.userData.interiorMeshData = {
+                vertices: new Float32Array(allVertices),
+                indices: new Uint32Array(allIndices),
+            };
         } else if (buildingType === "house") {
             // Add surrounding wall segments around front doorway (doorway opening x: 6.50 to 10.60, y: 0.40 to 5.45 is completely clear)
             const concreteMat = (Array.isArray(houseConcreteMat) ? houseConcreteMat[0] : houseConcreteMat)
@@ -346,7 +402,18 @@ export async function loadBuilding(scene, physicsSystem = null, doorSystem = nul
 
             if (physicsSystem) {
                 if (bType === "common-house") {
-                    // Hollow interior colliders for common-house (scale 0.25: floor & porch at Y = 0.50m)
+                    // Exact 3D triangular mesh collider for all interior furniture, props, and staircase
+                    if (template.userData.interiorMeshData) {
+                        const { vertices, indices } = template.userData.interiorMeshData;
+                        let v = vertices;
+                        if (scale !== 1.0) {
+                            v = new Float32Array(vertices.length);
+                            for (let i = 0; i < vertices.length; i++) v[i] = vertices[i] * scale;
+                        }
+                        physicsSystem.addStaticMesh(x, 0, z, rotY, v, indices);
+                    }
+
+                    // Hollow interior colliders for common-house envelope (scale 0.25: floor & porch at Y = 0.50m)
                     const commonHouseWalls = [
                         // 1. Entire house foundation slab and surrounding porch (surface at exact visual floor Y = 0.50m)
                         { x: 0, y: 0.25, z: -1.0, hx: 10.6, hy: 0.25, hz: 11.0 },
@@ -361,38 +428,14 @@ export async function loadBuilding(scene, physicsSystem = null, doorSystem = nul
                         { x: -10.1, y: 3.25, z: -1.9, hx: 0.2, hy: 2.75, hz: 9.6 },
                         // East right wall
                         { x: 10.1, y: 3.25, z: -1.9, hx: 0.2, hy: 2.75, hz: 9.6 },
-                        // South front wall (left of door: x = -10.1 to 3.5)
-                        { x: -3.3, y: 3.25, z: 7.7, hx: 6.8, hy: 2.75, hz: 0.2 },
-                        // South front wall (right of door: x = 5.5 to 10.1)
-                        { x: 7.8, y: 3.25, z: 7.7, hx: 2.3, hy: 2.75, hz: 0.2 },
-                        // Lintel above door (door height is from Y = 0.5 to Y = 4.3, lintel from 4.3 to 6.0)
-                        { x: 4.5, y: 5.15, z: 7.7, hx: 1.0, hy: 0.85, hz: 0.2 },
-                        // 4. Staircase Steps & Landing (U-shaped stairs to second floor)
-                        // Flight 1 (starts at bottom Y = 0.50m heading West up to Y = 2.92m)
-                        { x: -3.775, y: 0.42, z: -8.38, hx: 0.325, hy: 0.42, hz: 1.0 },
-                        { x: -4.425, y: 0.595, z: -8.38, hx: 0.325, hy: 0.595, hz: 1.0 },
-                        { x: -5.075, y: 0.765, z: -8.38, hx: 0.325, hy: 0.765, hz: 1.0 },
-                        { x: -5.725, y: 0.94, z: -8.38, hx: 0.325, hy: 0.94, hz: 1.0 },
-                        { x: -6.375, y: 1.115, z: -8.38, hx: 0.325, hy: 1.115, hz: 1.0 },
-                        { x: -7.025, y: 1.285, z: -8.38, hx: 0.325, hy: 1.285, hz: 1.0 },
-                        { x: -7.675, y: 1.46, z: -8.38, hx: 0.325, hy: 1.46, hz: 1.0 },
+                        // South front wall (left of door: x = -10.1 to 3.7)
+                        { x: -3.2, y: 3.25, z: 7.72, hx: 6.9, hy: 2.75, hz: 0.2 },
+                        // South front wall (right of door: x = 5.9 to 10.6, meets east wall at 10.6)
+                        { x: 8.25, y: 3.25, z: 7.72, hx: 2.35, hy: 2.75, hz: 0.2 },
+                        // Lintel above door (door height is from Y = 0.5 to Y = 4.5, lintel from 4.5 to 6.0)
+                        { x: 4.85, y: 5.25, z: 7.72, hx: 1.15, hy: 0.75, hz: 0.2 },
 
-                        // Landing (turnaround platform at Y = 3.26m)
-                        { x: -9.00, y: 1.63, z: -9.38, hx: 1.00, hy: 1.63, hz: 2.0 },
-
-                        // Flight 2 (heading East from landing up to second floor at Y = 5.68m)
-                        { x: -7.675, y: 1.805, z: -10.38, hx: 0.325, hy: 1.805, hz: 1.0 },
-                        { x: -7.025, y: 1.975, z: -10.38, hx: 0.325, hy: 1.975, hz: 1.0 },
-                        { x: -6.375, y: 2.15, z: -10.38, hx: 0.325, hy: 2.15, hz: 1.0 },
-                        { x: -5.725, y: 2.32, z: -10.38, hx: 0.325, hy: 2.32, hz: 1.0 },
-                        { x: -5.075, y: 2.495, z: -10.38, hx: 0.325, hy: 2.495, hz: 1.0 },
-                        { x: -4.425, y: 2.67, z: -10.38, hx: 0.325, hy: 2.67, hz: 1.0 },
-                        { x: -3.775, y: 2.84, z: -10.38, hx: 0.325, hy: 2.84, hz: 1.0 },
-
-                        // Central stair handrail divider between Flight 1 and Flight 2
-                        { x: -5.725, y: 3.5, z: -9.38, hx: 2.3, hy: 2.0, hz: 0.08 },
-
-                        // 5. Second Floor Slab (stairwell cutout at x: -10.1 to -3.45, z: -11.5 to -7.3)
+                        // 4. Second Floor Slab (stairwell cutout at x: -10.1 to -3.45, z: -11.5 to -7.3)
                         // South & central main upper floor (surface at Y = 6.00m)
                         { x: 0, y: 5.95, z: 0.2, hx: 10.1, hy: 0.05, hz: 7.5 },
                         // North-East upper floor (beside stairwell opening)
@@ -400,7 +443,7 @@ export async function loadBuilding(scene, physicsSystem = null, doorSystem = nul
                         // South upper balcony floor (extends from Z = 7.7m to 12.0m)
                         { x: 0, y: 5.95, z: 9.85, hx: 10.1, hy: 0.05, hz: 2.15 },
 
-                        // 6. Second Floor Perimeter Walls & Railings
+                        // 5. Second Floor Perimeter Walls & Railings
                         // Upper North back wall
                         { x: 0, y: 8.75, z: -11.5, hx: 10.1, hy: 2.75, hz: 0.2 },
                         // Upper West left wall
@@ -418,7 +461,7 @@ export async function loadBuilding(scene, physicsSystem = null, doorSystem = nul
                         // Second floor stairwell guardrail (prevents falling back into stairwell)
                         { x: -6.775, y: 6.5, z: -7.3, hx: 3.325, hy: 0.5, hz: 0.1 },
 
-                        // 7. Roof ceiling above second floor (height Y = 12.0m matching roof underside)
+                        // 6. Roof ceiling above second floor (height Y = 12.0m matching roof underside)
                         { x: 0, y: 12.0, z: -1.9, hx: 10.1, hy: 0.1, hz: 9.6 },
                     ];
                     physicsSystem.addHollowBuilding(x, 0, z, rotY, commonHouseWalls);
@@ -427,8 +470,8 @@ export async function loadBuilding(scene, physicsSystem = null, doorSystem = nul
                     if (doorSystem && doorGroup) {
                         const doorCol = physicsSystem.addDoorwayCollider(
                             x, 0, z, rotY,
-                            4.5, 2.4, 7.7,
-                            1.0, 1.9, 0.2
+                            4.85, 2.45, 7.72,
+                            1.05, 1.95, 0.2
                         );
                         doorSystem.registerDoor({
                             id: `door_common_${doorSystem.doors.length + 1}`,

@@ -156,48 +156,70 @@ export async function loadRoads(scene, physicsSystem = null) {
 
     scene.add(optimizedRoadGroup);
 
-    // Register physical sidewalk elevation colliders (surface at Y = 0.42)
+    // Register seamless physical sidewalk elevation colliders (surface at exact Y = 0.42)
     if (physicsSystem) {
       const SIDEWALK_HY = 0.21;
-      const SW_WIDTH = 5.5; // Half width of sidewalk strip
+      const SW_HALF_WIDTH = 3.85; // Seamless coverage from curb (±12.60) to plaza border (±20.30)
+      const INNER_POS = 43.85;
+      const OUTER_POS = 76.45;
 
-      // 1. Inner loop sidewalks (facing inner plaza blocks)
-      physicsSystem.addStaticBox(0, SIDEWALK_HY, -46.5, 80, SIDEWALK_HY, SW_WIDTH);
-      physicsSystem.addStaticBox(0, SIDEWALK_HY, 46.5, 80, SIDEWALK_HY, SW_WIDTH);
-      physicsSystem.addStaticBox(-46.5, SIDEWALK_HY, 0, SW_WIDTH, SIDEWALK_HY, 80);
-      physicsSystem.addStaticBox(46.5, SIDEWALK_HY, 0, SW_WIDTH, SIDEWALK_HY, 80);
+      // 1. Central square loop straight sidewalks (X or Z between -40 and +40)
+      const loopStraightLen = 40;
+      // North road (Z = -60)
+      physicsSystem.addStaticBox(0, SIDEWALK_HY, -INNER_POS, loopStraightLen, SIDEWALK_HY, SW_HALF_WIDTH);
+      physicsSystem.addStaticBox(0, SIDEWALK_HY, -OUTER_POS, loopStraightLen, SIDEWALK_HY, SW_HALF_WIDTH);
+      // South road (Z = +60)
+      physicsSystem.addStaticBox(0, SIDEWALK_HY, INNER_POS, loopStraightLen, SIDEWALK_HY, SW_HALF_WIDTH);
+      physicsSystem.addStaticBox(0, SIDEWALK_HY, OUTER_POS, loopStraightLen, SIDEWALK_HY, SW_HALF_WIDTH);
+      // West road (X = -60)
+      physicsSystem.addStaticBox(-INNER_POS, SIDEWALK_HY, 0, SW_HALF_WIDTH, SIDEWALK_HY, loopStraightLen);
+      physicsSystem.addStaticBox(-OUTER_POS, SIDEWALK_HY, 0, SW_HALF_WIDTH, SIDEWALK_HY, loopStraightLen);
+      // East road (X = +60)
+      physicsSystem.addStaticBox(INNER_POS, SIDEWALK_HY, 0, SW_HALF_WIDTH, SIDEWALK_HY, loopStraightLen);
+      physicsSystem.addStaticBox(OUTER_POS, SIDEWALK_HY, 0, SW_HALF_WIDTH, SIDEWALK_HY, loopStraightLen);
 
-      // 2. Outer loop sidewalks (facing outer blocks)
-      physicsSystem.addStaticBox(0, SIDEWALK_HY, -73.5, 80, SIDEWALK_HY, SW_WIDTH);
-      physicsSystem.addStaticBox(0, SIDEWALK_HY, 73.5, 80, SIDEWALK_HY, SW_WIDTH);
-      physicsSystem.addStaticBox(-73.5, SIDEWALK_HY, 0, SW_WIDTH, SIDEWALK_HY, 80);
-      physicsSystem.addStaticBox(73.5, SIDEWALK_HY, 0, SW_WIDTH, SIDEWALK_HY, 80);
+      // 2. The 4 Crossroad Junction Corners (centered at X=±60, Z=±60)
+      const junctionCorners = [
+        // NW Junction (center: -60, -60)
+        [-OUTER_POS, -OUTER_POS], [-OUTER_POS, -INNER_POS], [-INNER_POS, -OUTER_POS], [-INNER_POS, -INNER_POS],
+        // NE Junction (center: +60, -60)
+        [OUTER_POS, -OUTER_POS], [OUTER_POS, -INNER_POS], [INNER_POS, -OUTER_POS], [INNER_POS, -INNER_POS],
+        // SE Junction (center: +60, +60)
+        [OUTER_POS, OUTER_POS], [OUTER_POS, INNER_POS], [INNER_POS, OUTER_POS], [INNER_POS, INNER_POS],
+        // SW Junction (center: -60, +60)
+        [-OUTER_POS, OUTER_POS], [-OUTER_POS, INNER_POS], [-INNER_POS, OUTER_POS], [-INNER_POS, INNER_POS],
+      ];
+      junctionCorners.forEach(([cx, cz]) => {
+        physicsSystem.addStaticBox(cx, SIDEWALK_HY, cz, SW_HALF_WIDTH, SIDEWALK_HY, SW_HALF_WIDTH);
+      });
 
-      // 3. Extended road branch sidewalks (extending out to Z = ±240 and X = ±240)
-      const extBranchLength = 80; // half length of extension from ±80 to ±240
-      // North extensions
-      physicsSystem.addStaticBox(-73.5, SIDEWALK_HY, -160, SW_WIDTH, SIDEWALK_HY, extBranchLength);
-      physicsSystem.addStaticBox(-46.5, SIDEWALK_HY, -160, SW_WIDTH, SIDEWALK_HY, extBranchLength);
-      physicsSystem.addStaticBox(46.5, SIDEWALK_HY, -160, SW_WIDTH, SIDEWALK_HY, extBranchLength);
-      physicsSystem.addStaticBox(73.5, SIDEWALK_HY, -160, SW_WIDTH, SIDEWALK_HY, extBranchLength);
+      // 3. Extended road branch sidewalks (extending out from ±80 to ±240, length = 160)
+      const extBranchCenter = 160;
+      const extBranchHalfLen = 80;
 
-      // South extensions
-      physicsSystem.addStaticBox(-73.5, SIDEWALK_HY, 160, SW_WIDTH, SIDEWALK_HY, extBranchLength);
-      physicsSystem.addStaticBox(-46.5, SIDEWALK_HY, 160, SW_WIDTH, SIDEWALK_HY, extBranchLength);
-      physicsSystem.addStaticBox(46.5, SIDEWALK_HY, 160, SW_WIDTH, SIDEWALK_HY, extBranchLength);
-      physicsSystem.addStaticBox(73.5, SIDEWALK_HY, 160, SW_WIDTH, SIDEWALK_HY, extBranchLength);
+      // North extensions (going from Z = -80 to Z = -240)
+      physicsSystem.addStaticBox(-OUTER_POS, SIDEWALK_HY, -extBranchCenter, SW_HALF_WIDTH, SIDEWALK_HY, extBranchHalfLen);
+      physicsSystem.addStaticBox(-INNER_POS, SIDEWALK_HY, -extBranchCenter, SW_HALF_WIDTH, SIDEWALK_HY, extBranchHalfLen);
+      physicsSystem.addStaticBox(INNER_POS, SIDEWALK_HY, -extBranchCenter, SW_HALF_WIDTH, SIDEWALK_HY, extBranchHalfLen);
+      physicsSystem.addStaticBox(OUTER_POS, SIDEWALK_HY, -extBranchCenter, SW_HALF_WIDTH, SIDEWALK_HY, extBranchHalfLen);
 
-      // West extensions
-      physicsSystem.addStaticBox(-160, SIDEWALK_HY, -73.5, extBranchLength, SIDEWALK_HY, SW_WIDTH);
-      physicsSystem.addStaticBox(-160, SIDEWALK_HY, -46.5, extBranchLength, SIDEWALK_HY, SW_WIDTH);
-      physicsSystem.addStaticBox(-160, SIDEWALK_HY, 46.5, extBranchLength, SIDEWALK_HY, SW_WIDTH);
-      physicsSystem.addStaticBox(-160, SIDEWALK_HY, 73.5, extBranchLength, SIDEWALK_HY, SW_WIDTH);
+      // South extensions (going from Z = +80 to Z = +240)
+      physicsSystem.addStaticBox(-OUTER_POS, SIDEWALK_HY, extBranchCenter, SW_HALF_WIDTH, SIDEWALK_HY, extBranchHalfLen);
+      physicsSystem.addStaticBox(-INNER_POS, SIDEWALK_HY, extBranchCenter, SW_HALF_WIDTH, SIDEWALK_HY, extBranchHalfLen);
+      physicsSystem.addStaticBox(INNER_POS, SIDEWALK_HY, extBranchCenter, SW_HALF_WIDTH, SIDEWALK_HY, extBranchHalfLen);
+      physicsSystem.addStaticBox(OUTER_POS, SIDEWALK_HY, extBranchCenter, SW_HALF_WIDTH, SIDEWALK_HY, extBranchHalfLen);
 
-      // East extensions
-      physicsSystem.addStaticBox(160, SIDEWALK_HY, -73.5, extBranchLength, SIDEWALK_HY, SW_WIDTH);
-      physicsSystem.addStaticBox(160, SIDEWALK_HY, -46.5, extBranchLength, SIDEWALK_HY, SW_WIDTH);
-      physicsSystem.addStaticBox(160, SIDEWALK_HY, 46.5, extBranchLength, SIDEWALK_HY, SW_WIDTH);
-      physicsSystem.addStaticBox(160, SIDEWALK_HY, 73.5, extBranchLength, SIDEWALK_HY, SW_WIDTH);
+      // West extensions (going from X = -80 to X = -240)
+      physicsSystem.addStaticBox(-extBranchCenter, SIDEWALK_HY, -OUTER_POS, extBranchHalfLen, SIDEWALK_HY, SW_HALF_WIDTH);
+      physicsSystem.addStaticBox(-extBranchCenter, SIDEWALK_HY, -INNER_POS, extBranchHalfLen, SIDEWALK_HY, SW_HALF_WIDTH);
+      physicsSystem.addStaticBox(-extBranchCenter, SIDEWALK_HY, INNER_POS, extBranchHalfLen, SIDEWALK_HY, SW_HALF_WIDTH);
+      physicsSystem.addStaticBox(-extBranchCenter, SIDEWALK_HY, OUTER_POS, extBranchHalfLen, SIDEWALK_HY, SW_HALF_WIDTH);
+
+      // East extensions (going from X = +80 to X = +240)
+      physicsSystem.addStaticBox(extBranchCenter, SIDEWALK_HY, -OUTER_POS, extBranchHalfLen, SIDEWALK_HY, SW_HALF_WIDTH);
+      physicsSystem.addStaticBox(extBranchCenter, SIDEWALK_HY, -INNER_POS, extBranchHalfLen, SIDEWALK_HY, SW_HALF_WIDTH);
+      physicsSystem.addStaticBox(extBranchCenter, SIDEWALK_HY, INNER_POS, extBranchHalfLen, SIDEWALK_HY, SW_HALF_WIDTH);
+      physicsSystem.addStaticBox(extBranchCenter, SIDEWALK_HY, OUTER_POS, extBranchHalfLen, SIDEWALK_HY, SW_HALF_WIDTH);
     }
 
     return optimizedRoadGroup;

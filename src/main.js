@@ -77,42 +77,105 @@ const doorSystem = new BuildingDoorSystem({
 await playerController.loadRobotModel("/models/character/robot_charcter.glb");
 
 // HUD Elements Creation
+// Camera HUD Elements Creation
 const hudContainer = document.createElement("div");
 hudContainer.className = "camera-hud";
 hudContainer.innerHTML = `
-  <span class="hud-label">VIEW MODE:</span>
-  <button id="btn-top" class="hud-btn">[1] Top View</button>
-  <button id="btn-fps" class="hud-btn">[2] First Person</button>
-  <button id="btn-tpp" class="hud-btn active">[3] Third Person (TPP)</button>
-  <button id="btn-iso" class="hud-btn">[4] Isometric</button>
+  <div class="hud-label-chip">
+    <span class="hud-pulse-dot"></span>
+    <span class="hud-label">VIEW</span>
+  </div>
+  <button id="btn-top" class="hud-btn"><span class="key-tag">1</span> Top View</button>
+  <button id="btn-fps" class="hud-btn"><span class="key-tag">2</span> First Person</button>
+  <button id="btn-tpp" class="hud-btn active"><span class="key-tag">3</span> Third Person</button>
+  <button id="btn-iso" class="hud-btn"><span class="key-tag">4</span> Isometric</button>
 `;
 container.appendChild(hudContainer);
 
-const instructions = document.createElement("div");
-instructions.className = "city-instructions";
-instructions.style.display = "block";
-container.appendChild(instructions);
+// Modern Interactive Suggestion & Controls Dock
+const suggestionContainer = document.createElement("div");
+suggestionContainer.className = "suggestion-dock";
+suggestionContainer.innerHTML = `
+  <button id="btn-suggestion-toggle" class="suggestion-btn active" title="Toggle Controls & Hints">
+    <span class="sugg-glow"></span>
+    <span class="sugg-icon">💡</span>
+    <span class="sugg-title">SUGGESTIONS</span>
+    <span class="sugg-badge">CONTROLS</span>
+    <span class="sugg-toggle-arrow">▼</span>
+  </button>
+  <div id="suggestion-panel" class="suggestion-panel">
+    <div id="suggestion-chips" class="suggestion-chips"></div>
+  </div>
+`;
+container.appendChild(suggestionContainer);
 
 const btnTop = document.getElementById("btn-top");
 const btnFps = document.getElementById("btn-fps");
 const btnTpp = document.getElementById("btn-tpp");
 const btnIso = document.getElementById("btn-iso");
 
-// Function to update HUD active state and instructions text
+const btnSuggestionToggle = document.getElementById("btn-suggestion-toggle");
+const suggestionPanel = document.getElementById("suggestion-panel");
+const suggestionChips = document.getElementById("suggestion-chips");
+
+let suggestionsOpen = true;
+btnSuggestionToggle?.addEventListener("click", () => {
+  suggestionsOpen = !suggestionsOpen;
+  btnSuggestionToggle.classList.toggle("active", suggestionsOpen);
+  suggestionPanel?.classList.toggle("collapsed", !suggestionsOpen);
+});
+
+// Function to update HUD active state and suggestion chips
 function updateHudView(mode) {
   btnTop.classList.toggle("active", mode === "top");
   btnFps.classList.toggle("active", mode === "fpp");
   btnTpp.classList.toggle("active", mode === "tpp");
   btnIso.classList.toggle("active", mode === "isometric");
 
+  if (!suggestionChips) return;
+
   if (mode === "tpp") {
-    instructions.textContent = "STEP 2 CONTROLLER (TPP) | Click — Mouse Look | WASD — Walk | Shift — Run | Space — Jump | E — Door | H — Hi-Five | Scroll — Zoom | [V] Camera";
+    suggestionChips.innerHTML = `
+      <div class="sugg-chip"><kbd>WASD</kbd><span>Walk</span></div>
+      <div class="sugg-chip"><kbd>Shift</kbd><span>Sprint</span></div>
+      <div class="sugg-chip"><kbd>Space</kbd><span>Jump</span></div>
+      <div class="sugg-chip"><kbd>🖱️ Click</kbd><span>Look</span></div>
+      <div class="sugg-chip primary"><kbd>E</kbd><span>Open Door</span></div>
+      <div class="sugg-chip"><kbd>H</kbd><span>Hi-Five</span></div>
+      <div class="sugg-chip"><kbd>Scroll</kbd><span>Zoom</span></div>
+      <div class="sugg-chip"><kbd>V</kbd><span>Cam View</span></div>
+      <div class="sugg-chip accent"><kbd>L</kbd><span>Day/Night</span></div>
+      <div class="sugg-chip"><kbd>T</kbd><span>+1.5h</span></div>
+    `;
   } else if (mode === "fpp") {
-    instructions.textContent = "STEP 2 CONTROLLER (FPP) | Click — Mouse Look | WASD — Move | Shift — Sprint | Space — Jump | E — Door | [3] Third Person | [V] Camera";
+    suggestionChips.innerHTML = `
+      <div class="sugg-chip"><kbd>WASD</kbd><span>Move</span></div>
+      <div class="sugg-chip"><kbd>Shift</kbd><span>Sprint</span></div>
+      <div class="sugg-chip"><kbd>Space</kbd><span>Jump</span></div>
+      <div class="sugg-chip"><kbd>🖱️ Click</kbd><span>Look</span></div>
+      <div class="sugg-chip primary"><kbd>E</kbd><span>Open Door</span></div>
+      <div class="sugg-chip"><kbd>3</kbd><span>TPP Robot</span></div>
+      <div class="sugg-chip"><kbd>V</kbd><span>Cam View</span></div>
+      <div class="sugg-chip accent"><kbd>L</kbd><span>Day/Night</span></div>
+      <div class="sugg-chip"><kbd>T</kbd><span>+1.5h</span></div>
+    `;
   } else if (mode === "top") {
-    instructions.textContent = "TOP OVERVIEW | WASD / Arrows — Pan | Scroll / Q / E — Zoom | [3] TPP Robot | [2] First Person";
+    suggestionChips.innerHTML = `
+      <div class="sugg-chip"><kbd>WASD / Arrows</kbd><span>Pan Camera</span></div>
+      <div class="sugg-chip"><kbd>Scroll / Q / E</kbd><span>Zoom</span></div>
+      <div class="sugg-chip primary"><kbd>3</kbd><span>TPP Robot</span></div>
+      <div class="sugg-chip"><kbd>2</kbd><span>First Person</span></div>
+      <div class="sugg-chip accent"><kbd>L</kbd><span>Day/Night</span></div>
+    `;
   } else if (mode === "isometric") {
-    instructions.textContent = "ISOMETRIC VIEW | [3] TPP Robot | [2] First Person | [1] Top View | [4] Isometric";
+    suggestionChips.innerHTML = `
+      <div class="sugg-chip"><kbd>WASD / Arrows</kbd><span>Orbit</span></div>
+      <div class="sugg-chip"><kbd>Scroll</kbd><span>Zoom</span></div>
+      <div class="sugg-chip primary"><kbd>3</kbd><span>TPP Robot</span></div>
+      <div class="sugg-chip"><kbd>2</kbd><span>First Person</span></div>
+      <div class="sugg-chip"><kbd>1</kbd><span>Top View</span></div>
+      <div class="sugg-chip accent"><kbd>L</kbd><span>Day/Night</span></div>
+    `;
   }
 }
 

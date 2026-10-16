@@ -587,23 +587,49 @@ export class DayNightSystem {
     this.hud = document.createElement("div");
     this.hud.className = "day-night-hud";
     this.hud.innerHTML = `
+      <div class="dn-glow-accent"></div>
       <div class="dn-header">
         <div class="dn-clock-wrap">
-          <span class="dn-clock" id="dn-clock-text">09:00</span>
-          <span class="dn-badge" id="dn-badge-text">🌤️ Morning</span>
+          <div class="dn-orb-indicator" id="dn-orb-indicator"></div>
+          <div class="dn-time-meta">
+            <span class="dn-clock" id="dn-clock-text">09:00</span>
+            <span class="dn-badge" id="dn-badge-text">🌤️ Morning</span>
+          </div>
         </div>
-        <button id="btn-dn-pause" class="dn-btn active" title="Toggle Auto-Cycle (Space / P)">⏸ Pause</button>
+        <button id="btn-dn-pause" class="dn-btn dn-pause-btn active" title="Toggle Auto-Cycle (Space / P)">
+          <span class="dn-pause-icon">⏸</span>
+          <span class="dn-pause-text">PAUSE</span>
+        </button>
       </div>
 
       <div class="dn-slider-wrap">
         <input type="range" id="dn-time-slider" min="0" max="24" step="0.1" value="9.0" class="dn-slider" title="Scrub Time of Day" />
+        <div class="dn-slider-marks">
+          <span>00:00</span>
+          <span>06:00</span>
+          <span>12:00</span>
+          <span>18:00</span>
+          <span>24:00</span>
+        </div>
       </div>
 
       <div class="dn-controls">
-        <button id="btn-dn-dawn" class="dn-btn" title="Jump to Sunrise (06:30)">🌅 Dawn</button>
-        <button id="btn-dn-noon" class="dn-btn" title="Jump to High Noon (12:00)">☀️ Noon</button>
-        <button id="btn-dn-sunset" class="dn-btn" title="Jump to Sunset (18:30)">🌇 Sunset</button>
-        <button id="btn-dn-night" class="dn-btn" title="Jump to Cyber Night (22:00)">🌙 Night</button>
+        <button id="btn-dn-dawn" class="dn-btn dn-preset-btn" title="Jump to Sunrise (06:30)">
+          <span class="dn-preset-icon">🌅</span>
+          <span class="dn-preset-label">Dawn</span>
+        </button>
+        <button id="btn-dn-noon" class="dn-btn dn-preset-btn" title="Jump to High Noon (12:00)">
+          <span class="dn-preset-icon">☀️</span>
+          <span class="dn-preset-label">Noon</span>
+        </button>
+        <button id="btn-dn-sunset" class="dn-btn dn-preset-btn" title="Jump to Sunset (18:30)">
+          <span class="dn-preset-icon">🌇</span>
+          <span class="dn-preset-label">Sunset</span>
+        </button>
+        <button id="btn-dn-night" class="dn-btn dn-preset-btn" title="Jump to Cyber Night (22:00)">
+          <span class="dn-preset-icon">🌙</span>
+          <span class="dn-preset-label">Night</span>
+        </button>
         <button id="btn-dn-speed" class="dn-btn dn-speed-btn" title="Cycle Animation Speed">1x</button>
       </div>
     `;
@@ -615,11 +641,19 @@ export class DayNightSystem {
     this.sliderEl = document.getElementById("dn-time-slider");
     this.pauseBtn = document.getElementById("btn-dn-pause");
     this.speedBtn = document.getElementById("btn-dn-speed");
+    this.orbEl = document.getElementById("dn-orb-indicator");
 
     const btnDawn = document.getElementById("btn-dn-dawn");
     const btnNoon = document.getElementById("btn-dn-noon");
     const btnSunset = document.getElementById("btn-dn-sunset");
     const btnNight = document.getElementById("btn-dn-night");
+
+    this.presetButtons = [
+      { el: btnDawn, target: 6.5 },
+      { el: btnNoon, target: 12.0 },
+      { el: btnSunset, target: 18.3 },
+      { el: btnNight, target: 22.0 },
+    ];
 
     btnDawn?.addEventListener("click", () => this.setTime(6.5));
     btnNoon?.addEventListener("click", () => this.setTime(12.0));
@@ -675,7 +709,14 @@ export class DayNightSystem {
     this.isPaused = !!paused;
     if (this.pauseBtn) {
       this.pauseBtn.classList.toggle("active", !this.isPaused);
-      this.pauseBtn.textContent = this.isPaused ? "▶ Play" : "⏸ Pause";
+      const icon = this.pauseBtn.querySelector(".dn-pause-icon");
+      const text = this.pauseBtn.querySelector(".dn-pause-text");
+      if (icon && text) {
+        icon.textContent = this.isPaused ? "▶" : "⏸";
+        text.textContent = this.isPaused ? "PLAY" : "PAUSE";
+      } else {
+        this.pauseBtn.textContent = this.isPaused ? "▶ PLAY" : "⏸ PAUSE";
+      }
     }
   }
 
@@ -923,6 +964,19 @@ export class DayNightSystem {
 
     if (this.badgeEl) {
       this.badgeEl.textContent = state.badge;
+    }
+
+    if (this.orbEl) {
+      const isDay = this.timeOfDay >= 6.0 && this.timeOfDay < 18.0;
+      this.orbEl.className = `dn-orb-indicator ${isDay ? "is-day" : "is-night"}`;
+    }
+
+    if (this.presetButtons) {
+      this.presetButtons.forEach(({ el, target }) => {
+        if (!el) return;
+        const diff = Math.min(Math.abs(this.timeOfDay - target), 24 - Math.abs(this.timeOfDay - target));
+        el.classList.toggle("active", diff < 1.0);
+      });
     }
 
     // Synchronize slider thumb when not actively being dragged

@@ -420,6 +420,117 @@ export class PhysicsSystem {
   }
 
   /**
+   * Adds an exact kinematic mesh collider for a moving vehicle, combining the detailed
+   * 3D triangular surface mesh and a solid core barrier to prevent any clipping.
+   *
+   * @param {number} x
+   * @param {number} y
+   * @param {number} z
+   * @param {number} rotY
+   * @param {Float32Array} vertices
+   * @param {Uint32Array} indices
+   * @param {{ hx: number, hy: number, hz: number, cy: number }} [coreBox]
+   * @returns {{ body: RAPIER.RigidBody, meshCollider: RAPIER.Collider } | null}
+   */
+  addVehicleMeshCollider(x, y, z, rotY, vertices, indices, coreBox = null) {
+    if (!this.world) return null;
+    let bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(x, y, z);
+    if (rotY) {
+      bodyDesc = bodyDesc.setRotation({
+        x: 0,
+        y: Math.sin(rotY / 2),
+        z: 0,
+        w: Math.cos(rotY / 2),
+      });
+    }
+    const body = this.world.createRigidBody(bodyDesc);
+    const meshDesc = RAPIER.ColliderDesc.trimesh(vertices, indices)
+      .setFriction(0.5)
+      .setRestitution(0.0);
+    const meshCollider = this.world.createCollider(meshDesc, body);
+
+    if (coreBox) {
+      const coreDesc = RAPIER.ColliderDesc.cuboid(coreBox.hx, coreBox.hy, coreBox.hz)
+        .setTranslation(0, coreBox.cy, 0)
+        .setFriction(0.5)
+        .setRestitution(0.0);
+      this.world.createCollider(coreDesc, body);
+    }
+
+    return { body, meshCollider };
+  }
+
+  /**
+   * Adds an exact static mesh collider for stationary parked vehicles.
+   *
+   * @param {number} x
+   * @param {number} y
+   * @param {number} z
+   * @param {number} rotY
+   * @param {Float32Array} vertices
+   * @param {Uint32Array} indices
+   * @param {{ hx: number, hy: number, hz: number, cy: number }} [coreBox]
+   * @returns {{ body: RAPIER.RigidBody, meshCollider: RAPIER.Collider } | null}
+   */
+  addStaticVehicleMesh(x, y, z, rotY, vertices, indices, coreBox = null) {
+    if (!this.world) return null;
+    let bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z);
+    if (rotY) {
+      bodyDesc = bodyDesc.setRotation({
+        x: 0,
+        y: Math.sin(rotY / 2),
+        z: 0,
+        w: Math.cos(rotY / 2),
+      });
+    }
+    const body = this.world.createRigidBody(bodyDesc);
+    const meshDesc = RAPIER.ColliderDesc.trimesh(vertices, indices)
+      .setFriction(0.5)
+      .setRestitution(0.0);
+    const meshCollider = this.world.createCollider(meshDesc, body);
+
+    if (coreBox) {
+      const coreDesc = RAPIER.ColliderDesc.cuboid(coreBox.hx, coreBox.hy, coreBox.hz)
+        .setTranslation(0, coreBox.cy, 0)
+        .setFriction(0.5)
+        .setRestitution(0.0);
+      this.world.createCollider(coreDesc, body);
+    }
+
+    return { body, meshCollider };
+  }
+
+  /**
+   * Adds an exact static triangular mesh collider for building interiors/objects.
+   *
+   * @param {number} x
+   * @param {number} y
+   * @param {number} z
+   * @param {number} rotY
+   * @param {Float32Array} vertices
+   * @param {Uint32Array} indices
+   * @returns {{ body: RAPIER.RigidBody, collider: RAPIER.Collider } | null}
+   */
+  addStaticMesh(x, y, z, rotY, vertices, indices) {
+    if (!this.world) return null;
+    let bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z);
+    if (rotY) {
+      bodyDesc = bodyDesc.setRotation({
+        x: 0,
+        y: Math.sin(rotY / 2),
+        z: 0,
+        w: Math.cos(rotY / 2),
+      });
+    }
+    const body = this.world.createRigidBody(bodyDesc);
+    const colDesc = RAPIER.ColliderDesc.trimesh(vertices, indices)
+      .setFriction(0.5)
+      .setRestitution(0.0);
+    const collider = this.world.createCollider(colDesc, body);
+    return { body, collider };
+  }
+
+  /**
    * Clean up Rapier memory and simulation.
    */
   dispose() {

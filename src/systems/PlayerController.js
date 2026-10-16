@@ -187,8 +187,8 @@ export class PlayerController {
       modelWrapper.name = "Robot_Visual_Mesh";
       modelWrapper.scale.set(scaleFactor, scaleFactor, scaleFactor);
 
-      // Align feet precisely at Y = 0
-      rawModel.position.set(0, -rawBox.min.y, 0);
+      // Align feet precisely at Y = 0 (accounting for animation crouch offset)
+      rawModel.position.set(0, -rawBox.min.y + 0.08, 0);
       modelWrapper.add(rawModel);
 
       // 4. Enhance Materials with Vibrant Futuristic Glow & PBR Finish
