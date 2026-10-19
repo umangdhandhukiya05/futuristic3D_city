@@ -34,10 +34,6 @@ export class BuildingDoorSystem {
     this._createPromptUI();
   }
 
-  setPlayerController(controller) {
-    this.playerController = controller;
-  }
-
   /**
    * Creates the floating HUD prompt for door interactions.
    *

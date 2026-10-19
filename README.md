@@ -1,16 +1,34 @@
-# React + Vite
+# Futuristic 3D Cyberpunk City
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+An interactive, high-performance 3D futuristic city simulation built with Three.js, Rapier 3D physics, and Vite.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- **3D Urban Environment**: High-fidelity architectural buildings, multilane road network with crossroad junctions, street lamps, and animated futuristic glass dome centerpiece.
+- **Physical Locomotion**: Rapier 3D kinematic character controller with collision detection, stair traversal, and obstacle boundaries.
+- **Dynamic Day / Night Cycle**: 24-hour astronomical sky simulation with procedural sun/moon shaders, volumetric fog, dynamic lighting, and glowing emissive night lights.
+- **Interactive Architecture**: Proximity-prompted doors with smooth kinematic swing animations and physics synchronization.
+- **Autonomous Traffic**: Dynamic car and bus circuit navigation with collision detection and pedestrian safety avoidance.
+- **Perspective Camera System**: Switch between Third-Person (TPP robot character), First-Person (FPP), Top-down, and Isometric camera views.
 
-## React Compiler
+## Tech Stack
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- [Three.js](https://threejs.org/) - 3D WebGL graphics engine
+- [@dimforge/rapier3d-compat](https://rapier.rs/) - WebAssembly 3D physics simulation
+- [Vite](https://vite.dev/) - Fast frontend development & bundling
 
-## Expanding the ESLint configuration
+## Getting Started
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+```bash
+# Install dependencies
+npm install
+
+# Start development server
+npm run dev
+
+# Build for production
+npm run build
+
+# Run linter
+npm run lint
+```

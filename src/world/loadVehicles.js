@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { getModelLoader } from "./modelLoader.js";
 
 // Calculate continuous 3D position and yaw orientation along the outer asphalt road lane
-export function getCircuitState(distance, R = 61.5, rCorner = 16.0) {
+function getCircuitState(distance, R = 61.5, rCorner = 16.0) {
     const L_straight = 2 * (R - rCorner);
     const L_arc = (Math.PI / 2) * rCorner;
     const perimeter = 4 * (L_straight + L_arc);

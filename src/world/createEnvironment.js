@@ -1,4 +1,3 @@
-
 import * as THREE from "three";
 
 export function createEnvironment(scene) {
@@ -14,11 +13,5 @@ export function createEnvironment(scene) {
 
   scene.add(grid);
 
-  // Central reference placeholder (hidden now that centerpiece is installed)
-  const axes = new THREE.AxesHelper(10);
-  axes.position.y = 0.04;
-  axes.visible = false;
-  scene.add(axes);
-
-  return { grid, axes };
+  return grid;
 }

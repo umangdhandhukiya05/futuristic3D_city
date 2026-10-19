@@ -17,7 +17,7 @@ import { loadSignals } from "./world/loadSignals.js";
 import { loadVehicles, updateVehicles } from "./world/loadVehicles.js";
 import { loadGlassDome, updateGlassDome } from "./world/loadGlassDome.js";
 
-const container = document.querySelector("#app") || document.querySelector("#root") || document.body;
+const container = document.querySelector("#app") || document.body;
 
 const { scene, camera, renderer, sunlight, ambientLight, moonlight } = createScene(container);
 getModelLoader(renderer);
@@ -76,7 +76,6 @@ const doorSystem = new BuildingDoorSystem({
 // Load and setup the robot character model
 await playerController.loadRobotModel("/models/character/robot_charcter.glb");
 
-// HUD Elements Creation
 // Camera HUD Elements Creation
 const hudContainer = document.createElement("div");
 hudContainer.className = "camera-hud";
