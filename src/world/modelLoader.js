@@ -6,21 +6,14 @@ let sharedLoader = null;
 let dracoLoader = null;
 let ktx2Loader = null;
 
-/**
- * Returns a shared, singleton GLTFLoader instance pre-configured with:
- *
- * 1. DRACOLoader:
- *    Decodes Google Draco 3D geometry compression (vertices, normals, UVs, indices)
- *    in multi-threaded WebAssembly web workers off the main UI thread.
- *
- * 2. KTX2Loader:
- *    Transcodes GPU-compressed textures (Basis Universal ETC1S / UASTC)
- *    directly into the device's native VRAM texture format (BC7 / ASTC / ETC2)
- *    without expanding into giant uncompressed raw RGBA bitmaps.
- *
- * @param {THREE.WebGLRenderer} [renderer] - WebGLRenderer for GPU capability detection
- * @returns {GLTFLoader}
- */
+// Returns a shared, singleton GLTFLoader instance pre-configured with:
+// 1. DRACOLoader:
+// Decodes Google Draco 3D geometry compression (vertices, normals, UVs, indices)
+// in multi-threaded WebAssembly web workers off the main UI thread.
+// 2. KTX2Loader:
+// Transcodes GPU-compressed textures (Basis Universal ETC1S / UASTC)
+// directly into the device's native VRAM texture format (BC7 / ASTC / ETC2)
+// without expanding into giant uncompressed raw RGBA bitmaps.
 export function getModelLoader(renderer) {
   if (!sharedLoader) {
     sharedLoader = new GLTFLoader();

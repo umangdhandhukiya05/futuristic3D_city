@@ -575,75 +575,123 @@ canvas {
 }
 
 /* ========================================================
-   4. Interactive Door Proximity Prompt
+   4. Interactive Building Actions (Door & Lights Banner)
+   Position: Bottom-Left corner, Rectangular banner
    ======================================================== */
+.action-prompt,
 .door-prompt {
-  position: absolute;
-  bottom: 85px;
-  left: 50%;
-  transform: translateX(-50%);
+  position: fixed;
+  bottom: 28px;
+  left: 28px;
   display: flex;
-  align-items: center;
-  gap: 12px;
-  background: linear-gradient(135deg, rgba(8, 20, 38, 0.9) 0%, rgba(14, 32, 60, 0.9) 100%);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid var(--cyan-core);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.65), 0 0 25px rgba(0, 240, 255, 0.4), var(--glass-bevel);
-  padding: 10px 22px;
-  border-radius: 40px;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 250px;
+  background: linear-gradient(135deg, rgba(8, 20, 38, 0.95) 0%, rgba(14, 32, 58, 0.96) 100%);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(0, 240, 255, 0.45);
+  border-left: 4px solid var(--cyan-core);
+  box-shadow: 0 12px 35px rgba(0, 0, 0, 0.75), 0 0 25px rgba(0, 240, 255, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  padding: 12px 16px;
+  border-radius: 8px;
   z-index: 1000;
   pointer-events: auto;
-  cursor: pointer;
   user-select: none;
   transition: opacity 0.25s ease, transform 0.25s cubic-bezier(0.18, 0.89, 0.32, 1.28), box-shadow 0.2s ease;
   opacity: 1;
+  transform: translateY(0);
 }
 
+.action-prompt:hover,
 .door-prompt:hover {
-  transform: translateX(-50%) scale(1.06);
-  box-shadow: 0 8px 35px rgba(0, 0, 0, 0.75), 0 0 35px rgba(0, 240, 255, 0.7);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.8), 0 0 30px rgba(0, 240, 255, 0.4);
 }
 
+.action-prompt.hidden,
 .door-prompt.hidden {
   opacity: 0;
-  transform: translateX(-50%) translateY(14px) scale(0.9);
+  transform: translateY(16px);
   pointer-events: none;
 }
 
+.action-chip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(0, 240, 255, 0.06);
+  border: 1px solid rgba(0, 240, 255, 0.2);
+  border-radius: 6px;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.action-chip:hover {
+  background: rgba(0, 240, 255, 0.16);
+  border-color: rgba(0, 240, 255, 0.6);
+  transform: translateX(4px);
+  box-shadow: 0 0 14px rgba(0, 240, 255, 0.3);
+}
+
+.action-chip.hidden {
+  display: none !important;
+}
+
+.action-key-badge,
 .door-key-badge {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   background: linear-gradient(135deg, #00f0ff 0%, #0077ff 100%);
   color: #030a16;
   font-family: var(--font-mono);
   font-size: 14px;
   font-weight: 900;
-  border-radius: 8px;
-  box-shadow: 0 0 12px rgba(0, 240, 255, 0.9);
-  animation: keyPulse 1.8s infinite ease-in-out;
+  border-radius: 6px;
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.8);
+  animation: keyPulse 2s infinite ease-in-out;
+  flex-shrink: 0;
 }
 
+.action-key-badge.alt-key {
+  background: linear-gradient(135deg, #ff9f1c 0%, #ff5e00 100%);
+  color: #020712;
+  box-shadow: 0 0 12px rgba(255, 159, 28, 0.8);
+  animation: keyPulseAmber 2s infinite ease-in-out;
+}
+
+.action-text,
 .door-prompt-text {
   color: #ffffff;
   font-family: var(--font-main);
   font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 1px;
-  text-shadow: 0 0 10px rgba(0, 240, 255, 0.6);
+  font-weight: 800;
+  letter-spacing: 1.2px;
+  text-shadow: 0 0 10px rgba(0, 240, 255, 0.5);
   text-transform: uppercase;
 }
 
 @keyframes keyPulse {
   0%, 100% {
     transform: scale(1);
-    box-shadow: 0 0 8px rgba(0, 240, 255, 0.8);
+    box-shadow: 0 0 8px rgba(0, 240, 255, 0.7);
   }
   50% {
-    transform: scale(1.1);
-    box-shadow: 0 0 16px rgba(0, 240, 255, 1);
+    transform: scale(1.08);
+    box-shadow: 0 0 18px rgba(0, 240, 255, 1);
+  }
+}
+
+@keyframes keyPulseAmber {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 8px rgba(255, 159, 28, 0.7);
+  }
+  50% {
+    transform: scale(1.08);
+    box-shadow: 0 0 18px rgba(255, 159, 28, 1);
   }
 }

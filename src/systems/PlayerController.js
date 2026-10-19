@@ -1,15 +1,9 @@
 import * as THREE from "three";
 import { getModelLoader } from "../world/modelLoader.js";
+import { soundSystem } from "./SoundSystem.js";
 
-/**
- * Shortest-arc angular interpolation to smoothly rotate between two angles
- * without spinning 360 degrees when wrapping around -PI / +PI.
- *
- * @param {number} current - Current angle in radians
- * @param {number} target - Target angle in radians
- * @param {number} factor - Interpolation factor (0 to 1)
- * @returns {number}
- */
+// Shortest-arc angular interpolation to smoothly rotate between two angles
+// without spinning 360 degrees when wrapping around -PI / +PI.
 function lerpAngle(current, target, factor) {
   let diff = (target - current) % (Math.PI * 2);
   if (diff < -Math.PI) diff += Math.PI * 2;
@@ -17,30 +11,18 @@ function lerpAngle(current, target, factor) {
   return current + diff * Math.min(1, Math.max(0, factor));
 }
 
-/**
- * PlayerController
- *
- * Implements Step 2 — Player Controller:
- * - Rapier 3D kinematic capsule collider navigation and obstacle collision response.
- * - WASD locomotion with sprint (Shift) and jump (Space).
- * - Mouse look with pointer lock integration and clamped vertical pitch.
- * - Third-Person Perspective (TPP) camera orbiting smoothly behind the character.
- * - Robot character model (`/models/character/robot_charcter.glb`) scaled to physical capsule
- *   dimensions (1.70m height) with full skeletal animation (idle, walk, run, jump, hifive).
- * - First-Person Perspective (FPP) camera mode where the character model is cleanly hidden
- *   and camera acts directly as the player.
- */
+// PlayerController
+// Implements Step 2 — Player Controller:
+// - Rapier 3D kinematic capsule collider navigation and obstacle collision response.
+// - WASD locomotion with sprint (Shift) and jump (Space).
+// - Mouse look with pointer lock integration and clamped vertical pitch.
+// - Third-Person Perspective (TPP) camera orbiting smoothly behind the character.
+// - Robot character model (`/models/character/robot_charcter.glb`) scaled to physical capsule
+// dimensions (1.70m height) with full skeletal animation (idle, walk, run, jump, hifive).
+// - First-Person Perspective (FPP) camera mode where the character model is cleanly hidden
+// and camera acts directly as the player.
 export class PlayerController {
-  /**
-   * @param {Object} options
-   * @param {THREE.Scene} options.scene
-   * @param {THREE.PerspectiveCamera} options.camera
-   * @param {import("./PhysicsSystem.js").PhysicsSystem} options.physicsSystem
-   * @param {HTMLElement} options.domElement - WebGL canvas element
-   * @param {string} [options.initialMode="tpp"] - 'tpp' | 'fpp' | 'top' | 'isometric'
-   * @param {Function} [options.onModeChange] - Callback invoked when view mode changes
-   * @param {boolean} [options.invertY=false] - Invert vertical mouse pitch
-   */
+  
   constructor(options) {
     this.scene = options.scene;
     this.camera = options.camera;
@@ -99,11 +81,7 @@ export class PlayerController {
     this._bindEvents();
   }
 
-  /**
-   * Initializes event listeners for canvas clicks, mouse look, and scroll zoom.
-   *
-   * @private
-   */
+  // Initializes event listeners for canvas clicks, mouse look, and scroll zoom.
   _bindEvents() {
     this._onClick = () => {
       if ((this.viewMode === "tpp" || this.viewMode === "fpp") && !this.isPointerLocked) {
@@ -154,13 +132,8 @@ export class PlayerController {
     window.addEventListener("wheel", this._onWheel, { passive: false });
   }
 
-  /**
-   * Asynchronously loads, scales, centers, and enhances the robot character model
-   * to fit the physical capsule collider with full skeletal animations.
-   *
-   * @param {string} [modelPath="/models/character/robot_charcter.glb"]
-   * @returns {Promise<THREE.Group>}
-   */
+  // Asynchronously loads, scales, centers, and enhances the robot character model
+// to fit the physical capsule collider with full skeletal animations.
   async loadRobotModel(modelPath = "/models/character/robot_charcter.glb") {
     const loader = getModelLoader();
 
@@ -340,11 +313,29 @@ export class PlayerController {
     }
   }
 
-  /**
-   * Switches the active view mode and adjusts camera & model visibility accordingly.
-   *
-   * @param {'tpp' | 'fpp' | 'top' | 'isometric'} mode
-   */
+  // Synchronizes visual robot model and camera target with current physics body.
+  syncModelPosition() {
+    if (!this.physicsSystem || !this.robotGroup) return;
+    const bodyPos = this.physicsSystem.getPlayerPosition();
+    const baseFeetY = bodyPos.y - this.physicsSystem.eyeOffset;
+    this.robotGroup.position.set(bodyPos.x, baseFeetY, bodyPos.z);
+
+    if (this.viewMode === "tpp") {
+      const sinY = Math.sin(this.yaw);
+      const cosY = Math.cos(this.yaw);
+      const targetY = bodyPos.y + (this.tppHeightOffset - this.physicsSystem.eyeOffset);
+      this._targetLook.set(bodyPos.x, targetY, bodyPos.z);
+      const hDist = this.tppDistance * Math.cos(this.pitch);
+      const vDist = this.tppDistance * Math.sin(this.pitch);
+      const camX = this._targetLook.x + sinY * hDist;
+      const camY = Math.max(0.4, this._targetLook.y + vDist);
+      const camZ = this._targetLook.z + cosY * hDist;
+      this.camera.position.set(camX, camY, camZ);
+      this.camera.lookAt(this._targetLook);
+    }
+  }
+
+  // Switches the active view mode and adjusts camera & model visibility accordingly.
   setViewMode(mode) {
     if (!["tpp", "fpp", "top", "isometric"].includes(mode)) return;
 
@@ -373,9 +364,7 @@ export class PlayerController {
     }
   }
 
-  /**
-   * Cycles to the next camera perspective in sequence.
-   */
+  // Cycles to the next camera perspective in sequence.
   cycleViewMode() {
     const modes = ["tpp", "fpp", "top", "isometric"];
     const currentIndex = modes.indexOf(this.viewMode);
@@ -383,12 +372,7 @@ export class PlayerController {
     this.setViewMode(nextMode);
   }
 
-  /**
-   * Smoothly crossfades between animation states (idle, walk, run, jump, hifive).
-   *
-   * @param {string} name - Name of target action ('idle' | 'walk' | 'run' | 'jump' | 'hifive')
-   * @param {number} [duration=0.2] - Transition duration in seconds
-   */
+  // Smoothly crossfades between animation states (idle, walk, run, jump, hifive).
   fadeToAction(name, duration = 0.2) {
     if (!this.actions || !this.actions[name]) return;
     const nextAction = this.actions[name];
@@ -410,11 +394,7 @@ export class PlayerController {
     this.currentActionName = name;
   }
 
-  /**
-   * Adapts camera boom distance when entering or leaving house interiors.
-   *
-   * @param {boolean} isInterior
-   */
+  // Adapts camera boom distance when entering or leaving house interiors.
   setInteriorMode(isInterior) {
     if (this.isInterior === isInterior) return;
     this.isInterior = isInterior;
@@ -428,12 +408,7 @@ export class PlayerController {
     }
   }
 
-  /**
-   * Primary controller update loop executed every animation frame.
-   *
-   * @param {number} delta - Frame delta in seconds
-   * @param {Set<string>} keys - Active keyboard key codes
-   */
+  // Primary controller update loop executed every animation frame.
   update(delta, keys) {
     const clampedDelta = Math.min(delta, 0.05);
 
@@ -523,6 +498,18 @@ export class PlayerController {
         this.mixer.update(clampedDelta);
       }
 
+      // 5B. Robotic Locomotion Footsteps Audio (Mechanical servos & pavement steps)
+      if (this.isMoving && isGrounded) {
+        this.stepTimer = (this.stepTimer || 0) + clampedDelta;
+        const stepInterval = isSprinting ? 0.30 : 0.46;
+        if (this.stepTimer >= stepInterval) {
+          this.stepTimer = 0;
+          soundSystem.playFootstep(isSprinting, this.robotGroup.position);
+        }
+      } else {
+        this.stepTimer = 0.22;
+      }
+
       // 5. Update Camera Based on Active View Mode
       if (this.viewMode === "tpp") {
         this.tppDistance = THREE.MathUtils.lerp(this.tppDistance, this.targetTppDistance, 6 * clampedDelta);
@@ -570,9 +557,7 @@ export class PlayerController {
     }
   }
 
-  /**
-   * Clean up event listeners and Three.js memory upon disposal.
-   */
+  // Clean up event listeners and Three.js memory upon disposal.
   dispose() {
     this.domElement.removeEventListener("click", this._onClick);
     document.removeEventListener("pointerlockchange", this._onPointerLockChange);

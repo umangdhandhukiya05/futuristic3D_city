@@ -108,18 +108,68 @@ export async function loadGlassDome(scene, physicsSystem = null) {
 
     scene.add(domeRoot);
 
-    // Register centerpiece dome obstacle colliders
+    // Register accurate 3D Trimesh colliders directly from the model geometry
     if (physicsSystem) {
-      // Central glass sphere & core pillars (radius ~ 4.5m, height ~ 8.0m)
-      physicsSystem.addStaticBox(0, 4.0, 0, 4.5, 4.0, 4.5);
+      const allVertices = [];
+      const allIndices = [];
+      let vertexOffset = 0;
 
-      // 4 Satellite dome plinths
-      const satOffset = 13.5;
-      const satH = 1.6;
-      physicsSystem.addStaticBox(-satOffset, 2.0, -satOffset, satH, 2.0, satH);
-      physicsSystem.addStaticBox(satOffset, 2.0, -satOffset, satH, 2.0, satH);
-      physicsSystem.addStaticBox(-satOffset, 2.0, satOffset, satH, 2.0, satH);
-      physicsSystem.addStaticBox(satOffset, 2.0, satOffset, satH, 2.0, satH);
+      // Ensure all world matrices reflect final position, rotation, and scale
+      domeRoot.updateMatrixWorld(true);
+
+      domeRoot.traverse((obj) => {
+        if (obj.isMesh && obj.geometry) {
+          const nameLower = (obj.name || "").toLowerCase();
+
+          // Exclude purely non-solid visual energy effects, floating lightning arcs, and animated spinning rings
+          const isNonSolid =
+            nameLower.includes("lightning") ||
+            nameLower.includes("orbit") ||
+            nameLower.includes("ring") ||
+            nameLower.includes("core") ||
+            nameLower.includes("arc") ||
+            nameLower.includes("link") ||
+            nameLower.includes("meridian");
+
+          if (isNonSolid) return;
+
+          // Clone and transform geometry into exact world space coordinates
+          const geom = obj.geometry.clone();
+          geom.applyMatrix4(obj.matrixWorld);
+
+          const pos = geom.getAttribute("position");
+          const idxAttr = geom.getIndex();
+          if (!pos || pos.count < 3) {
+            geom.dispose();
+            return;
+          }
+
+          const baseIndex = vertexOffset;
+          for (let i = 0; i < pos.count; i++) {
+            allVertices.push(pos.getX(i), pos.getY(i), pos.getZ(i));
+          }
+          vertexOffset += pos.count;
+
+          if (idxAttr) {
+            for (let i = 0; i < idxAttr.count; i++) {
+              allIndices.push(baseIndex + idxAttr.getX(i));
+            }
+          } else {
+            for (let i = 0; i < pos.count; i++) {
+              allIndices.push(baseIndex + i);
+            }
+          }
+
+          geom.dispose();
+        }
+      });
+
+      if (allVertices.length > 0 && allIndices.length > 0) {
+        const vertices = new Float32Array(allVertices);
+        const indices = new Uint32Array(allIndices);
+        const domeCollider = physicsSystem.addStaticMesh(0, 0, 0, 0, vertices, indices);
+        domeRoot.userData.physicsCollider = domeCollider;
+      }
     }
 
     return { domeRoot, mixer: domeMixer };

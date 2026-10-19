@@ -1,21 +1,13 @@
 import * as THREE from "three";
 import RAPIER from "@dimforge/rapier3d-compat";
 
-/**
- * PhysicsSystem
- *
- * Encapsulates the Rapier 3D physics engine, gravity simulation, static collision
- * surfaces (city ground slab and perimeter boundaries), and kinematic character
- * controller for realistic first-person player physics and navigation.
- */
+// PhysicsSystem
+// Encapsulates the Rapier 3D physics engine, gravity simulation, static collision
+// surfaces (city ground slab and perimeter boundaries), and kinematic character
+// controller for realistic first-person player physics and navigation.
 export class PhysicsSystem {
-  /**
-   * Factory method to asynchronously initialize Rapier WebAssembly and construct
-   * the PhysicsSystem instance.
-   *
-   * @param {Object} [options]
-   * @returns {Promise<PhysicsSystem>}
-   */
+  // Factory method to asynchronously initialize Rapier WebAssembly and construct
+// the PhysicsSystem instance.
   static async create(options = {}) {
     await RAPIER.init();
     return new PhysicsSystem(options);
@@ -58,13 +50,8 @@ export class PhysicsSystem {
     this._moveDir = new THREE.Vector3();
   }
 
-  /**
-   * Creates a solid, non-penetrable ground collider slab sitting at Y = 0.
-   * Top surface aligns flush with the visual cobblestone ground plane.
-   *
-   * @private
-   * @param {number} size - Dimension of square ground plane (default 500)
-   */
+  // Creates a solid, non-penetrable ground collider slab sitting at Y = 0.
+// Top surface aligns flush with the visual cobblestone ground plane.
   _createGroundCollider(size) {
     const halfSize = size / 2 + 10;
     const thickness = 2.0;
@@ -80,12 +67,7 @@ export class PhysicsSystem {
     this.groundCollider = this.world.createCollider(groundColliderDesc, this.groundBody);
   }
 
-  /**
-   * Creates invisible perimeter wall colliders around city borders.
-   *
-   * @private
-   * @param {number} limit - Distance from origin to border walls
-   */
+  // Creates invisible perimeter wall colliders around city borders.
   _createPerimeterWalls(limit) {
     const wallHeight = 40.0;
     const wallThickness = 2.0;
@@ -108,12 +90,7 @@ export class PhysicsSystem {
     });
   }
 
-  /**
-   * Sets up kinematic player capsule and Rapier's advanced character controller.
-   *
-   * @private
-   * @param {THREE.Vector3} spawnPos
-   */
+  // Sets up kinematic player capsule and Rapier's advanced character controller.
   _createPlayerController(spawnPos) {
     // Body origin is at capsule center (spawn eye Y minus eye offset)
     const bodyCenterY = Math.max(this.eyeOffset, spawnPos.y - this.eyeOffset);
@@ -143,13 +120,7 @@ export class PhysicsSystem {
     };
   }
 
-  /**
-   * Primary physics update loop called every animation frame.
-   *
-   * @param {number} delta - Frame delta time in seconds
-   * @param {Object} inputState - Input key states or move vector { forward, backward, left, right, isSprinting, jump, moveVector, skipCameraSync }
-   * @param {THREE.Camera} [camera] - Three.js camera for orientation & position sync (optional if moveVector is provided)
-   */
+  // Primary physics update loop called every animation frame.
   update(delta, inputState, camera = null) {
     if (!this.world || !this.playerBody) return;
 
@@ -235,55 +206,35 @@ export class PhysicsSystem {
     }
   }
 
-  /**
-   * Advances the physics world when camera is in Top or Isometric view
-   * without applying first-person character movement.
-   */
+  // Advances the physics world when camera is in Top or Isometric view
+// without applying first-person character movement.
   step() {
     if (!this.world) return;
     this.world.step();
   }
 
-  /**
-   * Returns the current physical position of the player (center of body).
-   *
-   * @returns {THREE.Vector3}
-   */
+  // Returns the current physical position of the player (center of body).
   getPlayerPosition() {
     if (!this.playerBody) return new THREE.Vector3();
     const pos = this.playerBody.translation();
     return new THREE.Vector3(pos.x, pos.y, pos.z);
   }
 
-  /**
-   * Returns current camera eye position.
-   *
-   * @returns {THREE.Vector3}
-   */
+  // Returns current camera eye position.
   getPlayerEyePosition() {
     if (!this.playerBody) return new THREE.Vector3();
     const pos = this.playerBody.translation();
     return new THREE.Vector3(pos.x, pos.y + this.eyeOffset, pos.z);
   }
 
-  /**
-   * Returns current player feet / ground contact position.
-   *
-   * @returns {THREE.Vector3}
-   */
+  // Returns current player feet / ground contact position.
   getPlayerFeetPosition() {
     if (!this.playerBody) return new THREE.Vector3();
     const pos = this.playerBody.translation();
     return new THREE.Vector3(pos.x, Math.max(0, pos.y - this.eyeOffset), pos.z);
   }
 
-  /**
-   * Teleports the player body to new world coordinates.
-   *
-   * @param {number} x
-   * @param {number} y - Eye height or ground height
-   * @param {number} z
-   */
+  // Teleports the player body to new world coordinates.
   setPlayerPosition(x, y, z) {
     if (!this.playerBody) return;
     const bodyY = Math.max(this.eyeOffset, y - this.eyeOffset);
@@ -292,28 +243,41 @@ export class PhysicsSystem {
     this.player.verticalVelocity = 0.0;
   }
 
-  /**
-   * Checks whether the player is currently standing firmly on the ground.
-   *
-   * @returns {boolean}
-   */
+  // Snaps the player vertically onto the exact ground surface directly beneath them,
+// resolving any initial ground penetration, curb overlaps, or spawn height offset.
+  snapPlayerToGround(searchHeight = 8.0, maxDistance = 16.0) {
+    if (!this.world || !this.playerBody) return false;
+
+    // Step world once so all newly registered colliders are integrated into the BVH
+    this.world.step();
+
+    const currentPos = this.playerBody.translation();
+    const startY = currentPos.y + searchHeight;
+    const ray = new RAPIER.Ray(
+      { x: currentPos.x, y: startY, z: currentPos.z },
+      { x: 0, y: -1, z: 0 }
+    );
+
+    // Filter out player's own collider so ray only hits the world ground/floor
+    const hit = this.world.castRay(ray, maxDistance, true, undefined, undefined, this.playerCollider);
+    if (hit) {
+      const groundY = startY - hit.timeOfImpact;
+      const targetBodyY = groundY + this.eyeOffset;
+      this.playerBody.setTranslation({ x: currentPos.x, y: targetBodyY, z: currentPos.z }, true);
+      this.player.position.set(currentPos.x, targetBodyY, currentPos.z);
+      this.player.verticalVelocity = 0.0;
+      this.player.isGrounded = true;
+      return true;
+    }
+    return false;
+  }
+
+  // Checks whether the player is currently standing firmly on the ground.
   isGrounded() {
     return this.player.isGrounded;
   }
 
-  /**
-   * Adds an arbitrary static obstacle box collider to the physics world.
-   *
-   * @param {number} x
-   * @param {number} y
-   * @param {number} z
-   * @param {number} halfWidth
-   * @param {number} halfHeight
-   * @param {number} halfDepth
-   * @param {number} [friction=0.5]
-   * @param {number} [restitution=0.0]
-   * @returns {RAPIER.Collider}
-   */
+  // Adds an arbitrary static obstacle box collider to the physics world.
   addStaticBox(x, y, z, halfWidth, halfHeight, halfDepth, friction = 0.5, restitution = 0.0) {
     const bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z);
     const body = this.world.createRigidBody(bodyDesc);
@@ -323,16 +287,7 @@ export class PhysicsSystem {
     return this.world.createCollider(colDesc, body);
   }
 
-  /**
-   * Creates a compound rigid body with multiple hollow wall colliders.
-   *
-   * @param {number} x
-   * @param {number} y
-   * @param {number} z
-   * @param {number} rotY
-   * @param {Array<{ x: number, y: number, z: number, hx: number, hy: number, hz: number }>} wallSpecs
-   * @returns {{ body: RAPIER.RigidBody, colliders: Array<RAPIER.Collider> }}
-   */
+  // Creates a compound rigid body with multiple hollow wall colliders.
   addHollowBuilding(x, y, z, rotY, wallSpecs) {
     let bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z);
     if (rotY) {
@@ -355,21 +310,7 @@ export class PhysicsSystem {
     return { body, colliders };
   }
 
-  /**
-   * Adds a toggleable doorway barrier collider that can be enabled/disabled when doors open/close.
-   *
-   * @param {number} x
-   * @param {number} y
-   * @param {number} z
-   * @param {number} rotY
-   * @param {number} localX
-   * @param {number} localY
-   * @param {number} localZ
-   * @param {number} halfWidth
-   * @param {number} halfHeight
-   * @param {number} halfDepth
-   * @returns {RAPIER.Collider}
-   */
+  // Adds a toggleable doorway barrier collider that can be enabled/disabled when doors open/close.
   addDoorwayCollider(x, y, z, rotY, localX, localY, localZ, halfWidth, halfHeight, halfDepth) {
     let bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z);
     if (rotY) {
@@ -388,18 +329,7 @@ export class PhysicsSystem {
     return this.world.createCollider(colDesc, body);
   }
 
-  /**
-   * Adds a kinematic position-based box collider for moving obstacles like vehicles.
-   *
-   * @param {number} x
-   * @param {number} y
-   * @param {number} z
-   * @param {number} rotY
-   * @param {number} halfWidth
-   * @param {number} halfHeight
-   * @param {number} halfDepth
-   * @returns {{ body: RAPIER.RigidBody, collider: RAPIER.Collider } | null}
-   */
+  // Adds a kinematic position-based box collider for moving obstacles like vehicles.
   addKinematicBox(x, y, z, rotY, halfWidth, halfHeight, halfDepth) {
     if (!this.world) return null;
     let bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(x, y, z);
@@ -419,19 +349,8 @@ export class PhysicsSystem {
     return { body, collider };
   }
 
-  /**
-   * Adds an exact kinematic mesh collider for a moving vehicle, combining the detailed
-   * 3D triangular surface mesh and a solid core barrier to prevent any clipping.
-   *
-   * @param {number} x
-   * @param {number} y
-   * @param {number} z
-   * @param {number} rotY
-   * @param {Float32Array} vertices
-   * @param {Uint32Array} indices
-   * @param {{ hx: number, hy: number, hz: number, cy: number }} [coreBox]
-   * @returns {{ body: RAPIER.RigidBody, meshCollider: RAPIER.Collider } | null}
-   */
+  // Adds an exact kinematic mesh collider for a moving vehicle, combining the detailed
+// 3D triangular surface mesh and a solid core barrier to prevent any clipping.
   addVehicleMeshCollider(x, y, z, rotY, vertices, indices, coreBox = null) {
     if (!this.world) return null;
     let bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(x, y, z);
@@ -460,18 +379,7 @@ export class PhysicsSystem {
     return { body, meshCollider };
   }
 
-  /**
-   * Adds an exact static mesh collider for stationary parked vehicles.
-   *
-   * @param {number} x
-   * @param {number} y
-   * @param {number} z
-   * @param {number} rotY
-   * @param {Float32Array} vertices
-   * @param {Uint32Array} indices
-   * @param {{ hx: number, hy: number, hz: number, cy: number }} [coreBox]
-   * @returns {{ body: RAPIER.RigidBody, meshCollider: RAPIER.Collider } | null}
-   */
+  // Adds an exact static mesh collider for stationary parked vehicles.
   addStaticVehicleMesh(x, y, z, rotY, vertices, indices, coreBox = null) {
     if (!this.world) return null;
     let bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z);
@@ -500,17 +408,7 @@ export class PhysicsSystem {
     return { body, meshCollider };
   }
 
-  /**
-   * Adds an exact static triangular mesh collider for building interiors/objects.
-   *
-   * @param {number} x
-   * @param {number} y
-   * @param {number} z
-   * @param {number} rotY
-   * @param {Float32Array} vertices
-   * @param {Uint32Array} indices
-   * @returns {{ body: RAPIER.RigidBody, collider: RAPIER.Collider } | null}
-   */
+  // Adds an exact static triangular mesh collider for building interiors/objects.
   addStaticMesh(x, y, z, rotY, vertices, indices) {
     if (!this.world) return null;
     let bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(x, y, z);
@@ -530,9 +428,7 @@ export class PhysicsSystem {
     return { body, collider };
   }
 
-  /**
-   * Clean up Rapier memory and simulation.
-   */
+  // Clean up Rapier memory and simulation.
   dispose() {
     if (this.world) {
       this.world.free();

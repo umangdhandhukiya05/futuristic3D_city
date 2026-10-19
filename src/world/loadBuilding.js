@@ -3,6 +3,27 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { getModelLoader } from "./modelLoader.js";
 
 export async function loadBuilding(scene, physicsSystem = null, doorSystem = null) {
+    if (doorSystem?.setScene) {
+        doorSystem.setScene(scene);
+    }
+
+    // Local interior lighting presets for virtual rig illumination (60+ FPS, zero WebGL shader lag)
+    const COMMON_HOUSE_LOCAL_LIGHTS = [
+        { pos: new THREE.Vector3(0.0, 3.4, 0.5), color: 0xffeedd, range: 16.0, intensity: 45 },
+        { pos: new THREE.Vector3(0.0, 8.8, -3.5), color: 0xffeedd, range: 16.0, intensity: 42 },
+    ];
+
+    const HOUSE_LOCAL_LIGHTS = [
+        { pos: new THREE.Vector3(0.0, 3.4, -4.5), color: 0xffeedd, range: 18.0, intensity: 50 },
+    ];
+
+    const OFFICE_LOCAL_LIGHTS = [
+        // 1. Dedicated Office Reception & Entrance Lobby Area (direct illumination over reception counter & brand wall)
+        { pos: new THREE.Vector3(0.0, 2.7 * 1.6, 9.5 * 1.6), color: 0xfff3e0, range: 18.0 * 1.6, intensity: 60 },
+        // 2. Open Workspace & Meeting Area (rear office zone behind partition wall)
+        { pos: new THREE.Vector3(0.0, 2.7 * 1.6, -3.0 * 1.6), color: 0xffeedd, range: 20.0 * 1.6, intensity: 52 },
+    ];
+
     const loader = getModelLoader();
     const buildingsGroup = new THREE.Group();
     buildingsGroup.name = "City_Buildings_Group";
@@ -34,6 +55,36 @@ export async function loadBuilding(scene, physicsSystem = null, doorSystem = nul
                 // 1. Exclude all Blender Boolean Cutter tool helper meshes (e.g., NormalHouse_Door_Front_Cutter)
                 if (fullIdent.includes("cutter")) {
                     return;
+                }
+
+                // Enhance 3D brand logo, text signage, and wall lettering (ZIGNUTS, TECHNOLAB, etc.)
+                if (nameLower.includes("text") || nameLower.includes("logo")) {
+                    obj.material = obj.material.clone();
+                    obj.material.side = THREE.DoubleSide;
+                    if (nameLower.includes("zignuts")) {
+                        obj.material.name = "Zignuts_Brand_Text";
+                        obj.material.color = new THREE.Color(0x0088ff);
+                        obj.material.emissive = new THREE.Color(0x0077ff);
+                        obj.material.emissiveIntensity = 1.0;
+                        obj.material.toneMapped = false;
+                    } else if (nameLower.includes("technolab")) {
+                        obj.material.name = "Zignuts_Technolab_Text";
+                        obj.material.color = new THREE.Color(0xe0f2fe);
+                        obj.material.emissive = new THREE.Color(0x38bdf8);
+                        obj.material.emissiveIntensity = 0.8;
+                        obj.material.toneMapped = false;
+                    } else if (nameLower.includes("logo_text") || nameLower.includes("logo_subtitle") || nameLower.includes("logo_icon")) {
+                        obj.material.name = "Zignuts_Logo_Signage";
+                        if (!matName.includes("white")) {
+                            obj.material.color = new THREE.Color(0x0088ff);
+                            obj.material.emissive = new THREE.Color(0x0066cc);
+                            obj.material.emissiveIntensity = 0.8;
+                        } else {
+                            obj.material.emissive = new THREE.Color(0xffffff);
+                            obj.material.emissiveIntensity = 0.5;
+                        }
+                        obj.material.toneMapped = false;
+                    }
                 }
 
                 // 2. Separate interactive door meshes so they remain animated and distinct
@@ -81,6 +132,125 @@ export async function loadBuilding(scene, physicsSystem = null, doorSystem = nul
                         matGroups[matKey] = { material: mat, geoms: [] };
                     }
                     matGroups[matKey].geoms.push(geom);
+                    return;
+                }
+
+                // Enhance interior materials of common-house to match architectural render / Image 4
+                if (buildingType === "common-house" && obj.material) {
+                    const applyMatTuning = (m) => {
+                        if (!m) return;
+                        const mName = (m.name || "").toLowerCase();
+                        if (mName.includes("floor_wood")) {
+                            // Warm architectural wood plank tone matching reference image
+                            m.color.setHex(0xb58d67);
+                            m.roughness = 0.45;
+                        } else if (mName.includes("stairs_concrete")) {
+                            // Distinct step concrete tone giving crisp step visibility from top and bottom
+                            m.color.setHex(0xdcd7ce);
+                            m.roughness = 0.70;
+                        } else if (mName.includes("stairs_rail")) {
+                            // Dark architectural steel railing
+                            m.color.setHex(0x23272e);
+                            m.roughness = 0.35;
+                        } else if (mName.includes("plaster")) {
+                            // Soft warm interior plaster off-white avoiding flat blinding white wash
+                            m.color.setHex(0xf4f1ea);
+                            m.roughness = 0.85;
+                        }
+                    };
+                    if (Array.isArray(obj.material)) {
+                        obj.material.forEach(applyMatTuning);
+                    } else {
+                        applyMatTuning(obj.material);
+                    }
+                }
+
+                // 5. For common-house.glb: Carve out the stairwell rectangular opening in NormalHouse_Floor_Upper_Balcony
+                // so the staircase is completely visible from bottom-to-top and top-to-bottom with proper rim trim faces
+                if (buildingType === "common-house" && nameLower.includes("floor_upper_balcony")) {
+                    const origGeom = obj.geometry.clone();
+                    origGeom.applyMatrix4(obj.matrixWorld);
+
+                    const pos = origGeom.getAttribute("position");
+                    const idx = origGeom.getIndex();
+                    const nor = origGeom.getAttribute("normal");
+                    const uv = origGeom.getAttribute("uv");
+
+                    // Triangles 26 & 27 (solid bottom ceiling) and 40 & 41 (solid top floor) span across the stairwell
+                    const skipTriangles = new Set([26, 27, 40, 41]);
+                    const newPositions = [];
+                    const newNormals = [];
+                    const newUVs = [];
+                    const newIndices = [];
+                    let vCount = 0;
+
+                    for (let i = 0; i < idx.count; i += 3) {
+                        const triIdx = i / 3;
+                        if (skipTriangles.has(triIdx)) continue;
+
+                        for (let j = 0; j < 3; j++) {
+                            const vIdx = idx.getX(i + j);
+                            newPositions.push(pos.getX(vIdx), pos.getY(vIdx), pos.getZ(vIdx));
+                            newNormals.push(nor ? nor.getX(vIdx) : 0, nor ? nor.getY(vIdx) : 1, nor ? nor.getZ(vIdx) : 0);
+                            newUVs.push(uv ? uv.getX(vIdx) : 0, uv ? uv.getY(vIdx) : 0);
+                            newIndices.push(vCount++);
+                        }
+                    }
+
+                    // Helper to add a quad with scaled texture coordinates
+                    const addQuad = (p1, p2, p3, p4, normal, uvScale = 0.2) => {
+                        const quadPositions = [
+                            p1[0], p1[1], p1[2],
+                            p2[0], p2[1], p2[2],
+                            p3[0], p3[1], p3[2],
+                            p1[0], p1[1], p1[2],
+                            p3[0], p3[1], p3[2],
+                            p4[0], p4[1], p4[2],
+                        ];
+                        for (let k = 0; k < 6; k++) {
+                            newPositions.push(quadPositions[k * 3], quadPositions[k * 3 + 1], quadPositions[k * 3 + 2]);
+                            newNormals.push(normal[0], normal[1], normal[2]);
+                            newUVs.push(quadPositions[k * 3] * uvScale, quadPositions[k * 3 + 2] * uvScale);
+                            newIndices.push(vCount++);
+                        }
+                    };
+
+                    // Exact scaled coordinates for common-house upper floor slab (scale 0.25)
+                    const xMin = -82.158, xCut = -75.45, xMax = -61.908;
+                    const zMin = -8.229, zCut = -4.075, zMax = 11.025;
+                    const yBot = 5.2465, yTop = 5.75;
+
+                    // 1. North Floor Slab (z: zCut to zMax, spanning full width xMin to xMax)
+                    // Top face (+Y)
+                    addQuad([xMin, yTop, zMax], [xMax, yTop, zMax], [xMax, yTop, zCut], [xMin, yTop, zCut], [0, 1, 0]);
+                    // Bottom ceiling face (-Y)
+                    addQuad([xMin, yBot, zCut], [xMax, yBot, zCut], [xMax, yBot, zMax], [xMin, yBot, zMax], [0, -1, 0]);
+
+                    // 2. East Floor Slab beside stairs (z: zMin to zCut, x: xCut to xMax)
+                    // Top face (+Y)
+                    addQuad([xCut, yTop, zCut], [xMax, yTop, zCut], [xMax, yTop, zMin], [xCut, yTop, zMin], [0, 1, 0]);
+                    // Bottom ceiling face (-Y)
+                    addQuad([xCut, yBot, zMin], [xMax, yBot, zMin], [xMax, yBot, zCut], [xCut, yBot, zCut], [0, -1, 0]);
+
+                    // 3. Inner Stairwell Rim Faces (wooden side-trim enclosing the cut slab edges)
+                    // East rim face at x = xCut (facing into stair opening -X)
+                    addQuad([xCut, yTop, zMin], [xCut, yTop, zCut], [xCut, yBot, zCut], [xCut, yBot, zMin], [-1, 0, 0]);
+                    // North rim face at z = zCut (facing into stair opening -Z)
+                    addQuad([xCut, yTop, zCut], [xMin, yTop, zCut], [xMin, yBot, zCut], [xCut, yBot, zCut], [0, 0, -1]);
+
+                    const carvedGeom = new THREE.BufferGeometry();
+                    carvedGeom.setAttribute("position", new THREE.BufferAttribute(new Float32Array(newPositions), 3));
+                    carvedGeom.setAttribute("normal", new THREE.BufferAttribute(new Float32Array(newNormals), 3));
+                    carvedGeom.setAttribute("uv", new THREE.BufferAttribute(new Float32Array(newUVs), 2));
+                    carvedGeom.setIndex(newIndices);
+
+                    const mat = obj.material;
+                    const matKey = mat ? (mat.uuid || mat.name || "default") : "default";
+                    if (!matGroups[matKey]) {
+                        matGroups[matKey] = { material: mat, geoms: [] };
+                    }
+                    matGroups[matKey].geoms.push(carvedGeom);
+                    origGeom.dispose();
                     return;
                 }
 
@@ -152,14 +322,57 @@ export async function loadBuilding(scene, physicsSystem = null, doorSystem = nul
         // Merge sub-meshes into a handful of consolidated meshes per building
         const mergedContainer = new THREE.Group();
         for (const [, data] of Object.entries(matGroups)) {
+            // Normalize attributes so mergeGeometries never fails due to missing UVs/normals across meshes sharing a material
+            if (data.geoms.length > 1) {
+                const allAttrNames = new Set();
+                data.geoms.forEach((g) => {
+                    Object.keys(g.attributes).forEach((name) => allAttrNames.add(name));
+                });
+
+                data.geoms.forEach((g) => {
+                    allAttrNames.forEach((attrName) => {
+                        if (!g.attributes[attrName]) {
+                            const count = g.attributes.position.count;
+                            let itemSize = 3;
+                            if (attrName === "uv" || attrName === "uv2") itemSize = 2;
+                            else if (attrName.includes("tangent")) itemSize = 4;
+                            g.setAttribute(attrName, new THREE.BufferAttribute(new Float32Array(count * itemSize), itemSize));
+                        }
+                    });
+                });
+            }
+
             const merged = mergeGeometries(data.geoms, false);
+            const isEnterable = buildingType === "common-house" || buildingType === "house" || buildingType === "office";
             if (merged) {
                 const mat = data.material;
+                if (mat && isEnterable) {
+                    mat.shadowSide = THREE.DoubleSide;
+                    if (mat.isMeshStandardMaterial) {
+                        mat.envMapIntensity = 0.05;
+                    }
+                }
                 const mesh = new THREE.Mesh(merged, mat);
                 const isGlass = mat && (mat.transparent || (mat.name && mat.name.toLowerCase().includes("glass")));
                 mesh.castShadow = !isGlass;
                 mesh.receiveShadow = true;
                 mergedContainer.add(mesh);
+            } else {
+                // Fallback: If merge fails for any reason, add meshes individually so nothing is ever dropped!
+                data.geoms.forEach((g) => {
+                    const mat = data.material;
+                    if (mat && isEnterable) {
+                        mat.shadowSide = THREE.DoubleSide;
+                        if (mat.isMeshStandardMaterial) {
+                            mat.envMapIntensity = 0.05;
+                        }
+                    }
+                    const mesh = new THREE.Mesh(g, mat);
+                    const isGlass = mat && (mat.transparent || (mat.name && mat.name.toLowerCase().includes("glass")));
+                    mesh.castShadow = !isGlass;
+                    mesh.receiveShadow = true;
+                    mergedContainer.add(mesh);
+                });
             }
         }
 
@@ -348,22 +561,64 @@ export async function loadBuilding(scene, physicsSystem = null, doorSystem = nul
                 wrapper.add(doorPivotClone);
             }
 
-            // Warm interior corporate illumination scaled appropriately
-            const receptionLight = new THREE.PointLight(0xffeedd, 50, 24 * scale);
-            receptionLight.position.set(0, 2.7 * scale, 9.5 * scale);
-            wrapper.add(receptionLight);
+            // Exterior architectural sign illumination to spotlight the ZIGNUTS TECHNOLAB wall signage at night
+            const exteriorSignLight = new THREE.PointLight(0x00f0ff, 45, 12 * scale);
+            exteriorSignLight.position.set(-7.0 * scale, 2.2 * scale, -2.5 * scale);
+            mergedContainer.add(exteriorSignLight);
 
-            const workspaceLight = new THREE.PointLight(0xffeedd, 60, 30 * scale);
-            workspaceLight.position.set(0, 2.7 * scale, -3.0 * scale);
-            wrapper.add(workspaceLight);
+            // Extract exact 3D triangular mesh geometry for all office desks, chairs, meeting rooms, dividers, and reception
+            const officeVertices = [];
+            const officeIndices = [];
+            let officeVertexOffset = 0;
+            const officeOffset = new THREE.Vector3(-center.x, -box.min.y, -center.z);
 
-            const execLight = new THREE.PointLight(0xffe0cc, 35, 18 * scale);
-            execLight.position.set(4.5 * scale, 2.7 * scale, -10.5 * scale);
-            wrapper.add(execLight);
+            model.traverse((obj) => {
+                if (obj.isMesh && obj.geometry) {
+                    const nameLower = (obj.name || "").toLowerCase();
+                    const parentName = (obj.parent && obj.parent.name || "").toLowerCase();
+                    const fullIdent = `${nameLower} ${parentName}`;
 
-            const meetingLight = new THREE.PointLight(0xffe0cc, 35, 18 * scale);
-            meetingLight.position.set(-4.5 * scale, 2.7 * scale, -10.5 * scale);
-            wrapper.add(meetingLight);
+                    // Exclude outer structural perimeter walls, floors, ceilings, interactive entrance door, and 2D text
+                    if (nameLower.startsWith("floor_") || nameLower.startsWith("ceiling_")) return;
+                    if (nameLower.startsWith("wall_") || parentName.startsWith("wall_")) return;
+                    if (nameLower.startsWith("door_") || fullIdent.includes("doorleaf") || fullIdent.includes("doorhinge") || fullIdent.includes("door_trim")) return;
+                    if (fullIdent.includes("light") || fullIdent.includes("fan") || fullIdent.includes("baffle")) return;
+                    if (fullIdent.includes("logo") || fullIdent.includes("text") || fullIdent.includes("mural") || fullIdent.includes("quote")) return;
+                    if (fullIdent.includes("cam_") || fullIdent.includes("skirting")) return;
+
+                    const geom = obj.geometry.clone();
+                    geom.applyMatrix4(obj.matrixWorld);
+
+                    const pos = geom.getAttribute("position");
+                    const idxAttr = geom.getIndex();
+                    if (!pos || pos.count < 3) return;
+
+                    const baseIndex = officeVertexOffset;
+                    for (let i = 0; i < pos.count; i++) {
+                        officeVertices.push(
+                            pos.getX(i) + officeOffset.x,
+                            pos.getY(i) + officeOffset.y,
+                            pos.getZ(i) + officeOffset.z
+                        );
+                    }
+                    officeVertexOffset += pos.count;
+
+                    if (idxAttr) {
+                        for (let i = 0; i < idxAttr.count; i++) {
+                            officeIndices.push(baseIndex + idxAttr.getX(i));
+                        }
+                    } else {
+                        for (let i = 0; i < pos.count; i++) {
+                            officeIndices.push(baseIndex + i);
+                        }
+                    }
+                }
+            });
+
+            wrapper.userData.interiorMeshData = {
+                vertices: new Float32Array(officeVertices),
+                indices: new Uint32Array(officeIndices),
+            };
         }
 
         wrapper.userData.scale = scale;
@@ -434,6 +689,8 @@ export async function loadBuilding(scene, physicsSystem = null, doorSystem = nul
                         { x: 8.25, y: 3.25, z: 7.72, hx: 2.35, hy: 2.75, hz: 0.2 },
                         // Lintel above door (door height is from Y = 0.5 to Y = 4.5, lintel from 4.5 to 6.0)
                         { x: 4.85, y: 5.25, z: 7.72, hx: 1.15, hy: 0.75, hz: 0.2 },
+                        // Ground floor interior divider wall (between hallway and living/kitchen, z = -0.49 to 7.67)
+                        { x: -3.08, y: 3.00, z: 3.59, hx: 0.10, hy: 3.00, hz: 4.08 },
 
                         // 4. Second Floor Slab (stairwell cutout at x: -10.1 to -3.45, z: -11.5 to -7.3)
                         // South & central main upper floor (surface at Y = 6.00m)
@@ -443,7 +700,7 @@ export async function loadBuilding(scene, physicsSystem = null, doorSystem = nul
                         // South upper balcony floor (extends from Z = 7.7m to 12.0m)
                         { x: 0, y: 5.95, z: 9.85, hx: 10.1, hy: 0.05, hz: 2.15 },
 
-                        // 5. Second Floor Perimeter Walls & Railings
+                        // 5. Second Floor Perimeter Walls, Interior Dividing Wall & Railings
                         // Upper North back wall
                         { x: 0, y: 8.75, z: -11.5, hx: 10.1, hy: 2.75, hz: 0.2 },
                         // Upper West left wall
@@ -454,6 +711,8 @@ export async function loadBuilding(scene, physicsSystem = null, doorSystem = nul
                         { x: -5.675, y: 8.75, z: 7.7, hx: 4.425, hy: 2.75, hz: 0.2 },
                         { x: 6.425, y: 8.75, z: 7.7, hx: 3.675, hy: 2.75, hz: 0.2 },
                         { x: 0.75, y: 10.825, z: 7.7, hx: 2.0, hy: 0.675, hz: 0.2 },
+                        // Upper interior dividing wall (behind lounge bookshelf & master wardrobe, x: -9.65 to 6.13, z = -5.70)
+                        { x: -1.76, y: 8.98, z: -5.70, hx: 7.89, hy: 3.00, hz: 0.11 },
                         // Upper Balcony Railings (matching visual railing height and perimeter)
                         { x: 0, y: 7.25, z: 12.0, hx: 10.1, hy: 1.25, hz: 0.1 },
                         { x: -10.1, y: 7.25, z: 9.85, hx: 0.1, hy: 1.25, hz: 2.15 },
@@ -484,8 +743,9 @@ export async function loadBuilding(scene, physicsSystem = null, doorSystem = nul
                             localHingePos: doorGroup.position.clone(),
                             localInteriorBounds: new THREE.Box3(
                                 new THREE.Vector3(-9.75, 0.4, -11.25),
-                                new THREE.Vector3(9.75, 12.2, 12.0)
+                                new THREE.Vector3(9.75, 12.2, 7.5)
                             ),
+                            localLights: COMMON_HOUSE_LOCAL_LIGHTS,
                         });
                     }
                 } else if (bType === "house") {
@@ -543,8 +803,9 @@ export async function loadBuilding(scene, physicsSystem = null, doorSystem = nul
                             localHingePos: doorGroup.position.clone(),
                             localInteriorBounds: new THREE.Box3(
                                 new THREE.Vector3(-14.0, 0.4, -13.0),
-                                new THREE.Vector3(13.0, 6.0, 3.5)
+                                new THREE.Vector3(13.0, 6.0, 2.7)
                             ),
+                            localLights: HOUSE_LOCAL_LIGHTS,
                         });
                     }
                 } else if (bType === "office") {
@@ -575,16 +836,19 @@ export async function loadBuilding(scene, physicsSystem = null, doorSystem = nul
                         { x: -3.99 * osc, y: 1.70 * osc, z: 6.00 * osc, hx: 2.66 * osc, hy: 1.65 * osc, hz: 0.10 * osc },
                         { x: 3.99 * osc, y: 1.70 * osc, z: 6.00 * osc, hx: 2.66 * osc, hy: 1.65 * osc, hz: 0.10 * osc },
                         { x: 0, y: 3.075 * osc, z: 6.00 * osc, hx: 1.33 * osc, hy: 0.275 * osc, hz: 0.10 * osc },
-
-                        // 4. Key Furniture Colliders
-                        // Reception Counter
-                        { x: 0, y: 0.60 * osc, z: 11.20 * osc, hx: 1.75 * osc, hy: 0.60 * osc, hz: 0.45 * osc },
-                        // Executive Desk
-                        { x: 4.56 * osc, y: 0.45 * osc, z: -11.50 * osc, hx: 1.60 * osc, hy: 0.45 * osc, hz: 0.80 * osc },
-                        // Meeting Table
-                        { x: -4.44 * osc, y: 0.45 * osc, z: -10.70 * osc, hx: 1.50 * osc, hy: 0.45 * osc, hz: 0.60 * osc },
                     ];
                     physicsSystem.addHollowBuilding(x, 0, z, rotY, officeWalls);
+
+                    // Exact 3D triangular mesh collider for all office desks, chairs, workstations, meeting rooms, and reception
+                    if (template.userData.interiorMeshData) {
+                        const { vertices, indices } = template.userData.interiorMeshData;
+                        let v = vertices;
+                        if (scale !== 1.0) {
+                            v = new Float32Array(vertices.length);
+                            for (let i = 0; i < vertices.length; i++) v[i] = vertices[i] * scale;
+                        }
+                        physicsSystem.addStaticMesh(x, 0, z, rotY, v, indices);
+                    }
 
                     const doorGroup = clone.getObjectByName("Office_Door_Pivot");
                     if (doorSystem && doorGroup) {
@@ -603,9 +867,10 @@ export async function loadBuilding(scene, physicsSystem = null, doorSystem = nul
                             closedAngle: 0,
                             localHingePos: doorGroup.position.clone(),
                             localInteriorBounds: new THREE.Box3(
-                                new THREE.Vector3(-6.8 * osc, 0.0, -13.3 * osc),
-                                new THREE.Vector3(6.8 * osc, 3.6 * osc, 13.3 * osc)
+                                new THREE.Vector3(-6.4 * osc, 0.0, -13.0 * osc),
+                                new THREE.Vector3(6.5 * osc, 3.6 * osc, 13.0 * osc)
                             ),
+                            localLights: OFFICE_LOCAL_LIGHTS,
                         });
                     }
                 } else {

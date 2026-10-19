@@ -8,10 +8,8 @@ import {
   createMoonGlowMaterial,
 } from "../world/celestialShaders.js";
 
-/**
- * 24-Hour Keyframe Table for Smooth Astronomical and Atmospheric Interpolation.
- * Seamlessly loops from 24:00 back to 00:00 without discontinuities.
- */
+// 24-Hour Keyframe Table for Smooth Astronomical and Atmospheric Interpolation.
+// Seamlessly loops from 24:00 back to 00:00 without discontinuities.
 const KEYFRAMES = [
   {
     hour: 0.0, // Midnight
@@ -275,9 +273,7 @@ const KEYFRAMES = [
   },
 ];
 
-/**
- * Procedural Circular Soft Star Texture Generator (Single 32x32 Canvas Texture).
- */
+// Procedural Circular Soft Star Texture Generator (Single 32x32 Canvas Texture).
 function createStarTexture() {
   const canvas = document.createElement("canvas");
   canvas.width = 32;
@@ -298,17 +294,15 @@ function createStarTexture() {
   return texture;
 }
 
-/**
- * Production-Grade Day/Night System for Three.js Futuristic City.
- * Integrates:
- * - Three.js Sky Addon for physical atmospheric scattering
- * - Procedural Sun Disc with limb-darkening & solar corona flare
- * - Procedural Moon with maria topography, craters, earthshine & lunar halo
- * - Starfield particle dome with depth occlusion
- * - Directional sunlight (with shadow casting) & directional moonlight
- * - Smooth streetlight & building window emission transitions
- * - Configurable cycle duration, start time, pausing, speed scaling, and full HUD
- */
+// Production-Grade Day/Night System for Three.js Futuristic City.
+// Integrates:
+// - Three.js Sky Addon for physical atmospheric scattering
+// - Procedural Sun Disc with limb-darkening & solar corona flare
+// - Procedural Moon with maria topography, craters, earthshine & lunar halo
+// - Starfield particle dome with depth occlusion
+// - Directional sunlight (with shadow casting) & directional moonlight
+// - Smooth streetlight & building window emission transitions
+// - Configurable cycle duration, start time, pausing, speed scaling, and full HUD
 export class DayNightSystem {
   constructor({
     scene,
@@ -363,6 +357,10 @@ export class DayNightSystem {
     // Orbit Radius: Celestial bodies are placed far in the sky dome (within camera.far = 1500)
     this.ORBIT_RADIUS = 680;
     this.LIGHT_DIST = 320;
+
+    // Interior Isolation Tracking: Zeroes out outdoor sun, ambient, and environment map inside houses
+    this.isInsideBuilding = false;
+    this.interiorFactor = 0.0;
 
     // Track dynamic emissive materials (street lamps, windows, signals)
     this.streetLightMaterials = [];
@@ -732,6 +730,16 @@ export class DayNightSystem {
     return this.timeOfDay;
   }
 
+  isDayTime() {
+    return this.timeOfDay >= 6.0 && this.timeOfDay < 18.5;
+  }
+
+  // Sets whether the player is currently inside an enterable building interior.
+// When inside, exterior sunlight, ambient sky light, and HDR environment are smoothly isolated.
+  setInteriorState(isInside) {
+    this.isInsideBuilding = !!isInside;
+  }
+
   isPausedState() {
     return this.isPaused;
   }
@@ -838,6 +846,12 @@ export class DayNightSystem {
     // 3. Interpolate Atmospheric & Keyframe State
     const state = this._interpolateState(this.timeOfDay);
 
+    // Smooth transition between outdoor daylight and isolated indoor darkness
+    const targetInterior = this.isInsideBuilding ? 1.0 : 0.0;
+    const lerpSpeed = deltaTime > 0 ? Math.min(1.0, 10.0 * deltaTime) : 0.2;
+    this.interiorFactor = THREE.MathUtils.lerp(this.interiorFactor, targetInterior, lerpSpeed);
+    const outdoorFactor = Math.max(0.0, 1.0 - this.interiorFactor);
+
     // Apply Sky atmospheric parameters
     if (this.sky) {
       const uniforms = this.sky.material.uniforms;
@@ -849,6 +863,7 @@ export class DayNightSystem {
 
     // 4. Synchronize Directional Sunlight (Primary Shadow Caster)
     // When sun is above horizon, shadows match sun position and direction
+    // Completely isolated when inside building so sun never illuminates rooms
     if (sunY > -15) {
       this.sunlight.position.set(
         this._sunDir.x * this.LIGHT_DIST,
@@ -857,8 +872,8 @@ export class DayNightSystem {
       );
       this.sunlight.target.position.set(0, 0, 0);
       this.sunlight.color.copy(state.sunColor);
-      this.sunlight.intensity = state.sunIntensity;
-      this.sunlight.castShadow = sunY > 0 && state.sunIntensity > 0.05;
+      this.sunlight.intensity = state.sunIntensity * outdoorFactor;
+      this.sunlight.castShadow = sunY > 0 && state.sunIntensity * outdoorFactor > 0.05;
     } else {
       this.sunlight.intensity = 0.0;
       this.sunlight.castShadow = false;
@@ -874,16 +889,17 @@ export class DayNightSystem {
       );
       this.moonlight.target.position.set(0, 0, 0);
       this.moonlight.color.setHex(0x9cc8ff);
-      this.moonlight.intensity = state.moonIntensity;
+      this.moonlight.intensity = state.moonIntensity * outdoorFactor;
     } else {
       this.moonlight.intensity = 0.0;
     }
 
     // 6. Synchronize Ambient Hemisphere Light
+    // Zeroes out inside building so sky ambient doesn't light up dark rooms
     if (this.ambientLight) {
       this.ambientLight.color.copy(state.hemiSky);
       this.ambientLight.groundColor.copy(state.hemiGround);
-      this.ambientLight.intensity = state.hemiIntensity;
+      this.ambientLight.intensity = state.hemiIntensity * outdoorFactor;
     }
 
     // 7. Synchronize Fog Color and Renderer Tone Mapping Exposure
@@ -895,9 +911,9 @@ export class DayNightSystem {
     }
 
     // 8. Synchronize IBL Environment Reflection Intensity
-    // Scales daytime reflections down at night so dark glass & metals don't reflect midday sky
+    // Scales daytime reflections down at night and zeroes out when inside so sky doesn't illuminate rooms
     if (this.scene.environmentIntensity !== undefined) {
-      this.scene.environmentIntensity = state.envIntensity;
+      this.scene.environmentIntensity = state.envIntensity * outdoorFactor;
     }
 
     // 9. Calculate Dynamic Horizon Fade & Sunset Chromatic Transition

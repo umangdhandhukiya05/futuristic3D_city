@@ -1,113 +1,10 @@
 import * as THREE from "three";
 import { getModelLoader } from "./modelLoader.js";
+import { trafficLightState } from "./loadSignals.js";
+import { soundSystem } from "../systems/SoundSystem.js";
 
-// Calculate continuous 3D position and yaw orientation along the outer asphalt road lane
-function getCircuitState(distance, R = 61.5, rCorner = 16.0) {
-    const L_straight = 2 * (R - rCorner);
-    const L_arc = (Math.PI / 2) * rCorner;
-    const perimeter = 4 * (L_straight + L_arc);
-
-    // Normalize distance into [0, perimeter)
-    let d = ((distance % perimeter) + perimeter) % perimeter;
-
-    let x, z, dx, dz;
-
-    if (d < L_straight) {
-        // 0. North straight (heading East +X)
-        const progress = -(R - rCorner) + d;
-        x = progress;
-        z = -R;
-        dx = 1;
-        dz = 0;
-    } else {
-        d -= L_straight;
-        if (d < L_arc) {
-            // 1. NE corner arc
-            const angle = -Math.PI / 2 + (d / L_arc) * (Math.PI / 2);
-            const cx = R - rCorner;
-            const cz = -(R - rCorner);
-            x = cx + rCorner * Math.cos(angle);
-            z = cz + rCorner * Math.sin(angle);
-            dx = -Math.sin(angle);
-            dz = Math.cos(angle);
-        } else {
-            d -= L_arc;
-            if (d < L_straight) {
-                // 2. East straight (heading South +Z)
-                const progress = -(R - rCorner) + d;
-                x = R;
-                z = progress;
-                dx = 0;
-                dz = 1;
-            } else {
-                d -= L_straight;
-                if (d < L_arc) {
-                    // 3. SE corner arc
-                    const angle = 0 + (d / L_arc) * (Math.PI / 2);
-                    const cx = R - rCorner;
-                    const cz = R - rCorner;
-                    x = cx + rCorner * Math.cos(angle);
-                    z = cz + rCorner * Math.sin(angle);
-                    dx = -Math.sin(angle);
-                    dz = Math.cos(angle);
-                } else {
-                    d -= L_arc;
-                    if (d < L_straight) {
-                        // 4. South straight (heading West -X)
-                        const progress = (R - rCorner) - d;
-                        x = progress;
-                        z = R;
-                        dx = -1;
-                        dz = 0;
-                    } else {
-                        d -= L_straight;
-                        if (d < L_arc) {
-                            // 5. SW corner arc
-                            const angle = Math.PI / 2 + (d / L_arc) * (Math.PI / 2);
-                            const cx = -(R - rCorner);
-                            const cz = R - rCorner;
-                            x = cx + rCorner * Math.cos(angle);
-                            z = cz + rCorner * Math.sin(angle);
-                            dx = -Math.sin(angle);
-                            dz = Math.cos(angle);
-                        } else {
-                            d -= L_straight;
-                            if (d < L_straight) {
-                                // 6. West straight (heading North -Z)
-                                const progress = (R - rCorner) - d;
-                                x = -R;
-                                z = progress;
-                                dx = 0;
-                                dz = -1;
-                            } else {
-                                d -= L_straight;
-                                // 7. NW corner arc
-                                const angle = Math.PI + (d / L_arc) * (Math.PI / 2);
-                                const cx = -(R - rCorner);
-                                const cz = -(R - rCorner);
-                                x = cx + rCorner * Math.cos(angle);
-                                z = cz + rCorner * Math.sin(angle);
-                                dx = -Math.sin(angle);
-                                dz = Math.cos(angle);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    const yaw = -Math.atan2(dz, dx);
-    return { x, z, yaw, perimeter, dx, dz };
-}
-
-/**
- * Extracts unified triangular mesh vertex and index buffers from a 3D model hierarchy
- * in the root group's local coordinate space for exact Rapier trimesh collision.
- *
- * @param {THREE.Group} rootGroup
- * @returns {{ vertices: Float32Array, indices: Uint32Array }}
- */
+// Extracts unified triangular mesh vertex and index buffers from a 3D model hierarchy
+// in the root group's local coordinate space for exact Rapier trimesh collision.
 function extractVehicleMeshData(rootGroup) {
     rootGroup.updateMatrixWorld(true);
     const invRoot = rootGroup.matrixWorld.clone().invert();
@@ -121,7 +18,6 @@ function extractVehicleMeshData(rootGroup) {
             const posAttr = geom.getAttribute("position");
             if (!posAttr) return;
 
-            // Transform each vertex by the mesh's relative transform inside the root group
             const m = new THREE.Matrix4().multiplyMatrices(invRoot, obj.matrixWorld);
             const v = new THREE.Vector3();
 
@@ -168,13 +64,7 @@ export async function loadVehicles(scene, physicsSystem = null) {
         const CAR_SCALE = 0.42;
         const BUS_SCALE = 0.45;
 
-        // Asphalt road driving lane radius R = 61.5 (tile center is 60.0; outer driving lane is ~61.5)
-        const R = 61.5;
-        const rCorner = 16.0;
-        const dummyState = getCircuitState(0, R, rCorner);
-        const P = dummyState.perimeter;
-
-        // Create base prototypes to extract exact 3D mesh collider geometry
+        // Base prototypes to extract exact 3D mesh collider geometry
         const createPrototype = (gltfScene, scale) => {
             const wrapper = new THREE.Group();
             const model = gltfScene.clone(true);
@@ -190,27 +80,36 @@ export async function loadVehicles(scene, physicsSystem = null) {
         const carProto = createPrototype(gltfCar.scene, CAR_SCALE);
         const busProto = createPrototype(gltfBus.scene, BUS_SCALE);
 
-        // Precompute exact 3D mesh collider geometry buffers
         const carMeshData = extractVehicleMeshData(carProto);
         const busMeshData = extractVehicleMeshData(busProto);
 
         const carCoreBox = { hx: 0.95, hy: 0.85, hz: 0.45, cy: 0.85 };
         const busCoreBox = { hx: 2.70, hy: 1.50, hz: 0.85, cy: 1.50 };
 
-        /**
-         * Helper to instantiate a customized vehicle with individual paint color and exact mesh collider
-         */
-        const createVehicleInstance = ({
-            type,
-            gltfScene,
-            scale,
-            primaryColor,
-            accentColor = null,
-            startDistance = 0,
-            cruiseSpeed = 10.5,
-        }) => {
+        // Helper to instantiate a customized vehicle with individual paint color and exact mesh collider
+        const createVehicleInstance = (cfg) => {
+            const {
+                id,
+                name,
+                type,
+                gltfScene,
+                scale,
+                primaryColor,
+                accentColor = null,
+                axis,
+                direction,
+                laneCoord,
+                startCoord,
+                endCoord,
+                yaw,
+                approachAxis,
+                junctions,
+                initialProgress = 0,
+                cruiseSpeed = 10.0,
+            } = cfg;
+
             const wrapper = new THREE.Group();
-            wrapper.name = `${type}_${primaryColor.toString(16)}`;
+            wrapper.name = `${name}_${primaryColor.toString(16)}`;
             const model = gltfScene.clone(true);
             const pColor = new THREE.Color(primaryColor);
             const aColor = accentColor ? new THREE.Color(accentColor) : null;
@@ -248,16 +147,15 @@ export async function loadVehicles(scene, physicsSystem = null) {
 
             model.scale.set(scale, scale, scale);
 
-            // Calculate bounding box of scaled model
             const box = new THREE.Box3().setFromObject(model);
             const center = new THREE.Vector3();
             box.getCenter(center);
 
-            // Shift model inside wrapper so wrapper origin (0,0,0) is at exact horizontal center and bottom of tires
+            // Shift model inside wrapper so wrapper origin (0,0,0) is at horizontal center and bottom of tires
             model.position.set(-center.x, -box.min.y, -center.z);
             wrapper.add(model);
 
-            // Detect wheels for animated rotation
+            // Detect wheels for calibrated rotation
             const wheels = [];
             model.traverse((obj) => {
                 if (obj.name && obj.name.toLowerCase().includes("wheel")) {
@@ -265,21 +163,25 @@ export async function loadVehicles(scene, physicsSystem = null) {
                 }
             });
 
-            const initState = getCircuitState(startDistance, R, rCorner);
-            wrapper.position.set(initState.x, 0.02, initState.z);
-            wrapper.rotation.y = initState.yaw;
+            // Calculate starting world coordinates
+            const currentCoord = startCoord + direction * (Math.abs(endCoord - startCoord) * initialProgress);
+            const posX = axis === "Z" ? laneCoord : currentCoord;
+            const posZ = axis === "Z" ? currentCoord : laneCoord;
 
-            // Attach exact 3D mesh collider to physically block character from wheels, fenders, and doors
+            wrapper.position.set(posX, 0.02, posZ);
+            wrapper.rotation.y = yaw;
+
+            // Attach exact 3D mesh collider to physically block character
             const meshData = type === "bus" ? busMeshData : carMeshData;
             const coreBox = type === "bus" ? busCoreBox : carCoreBox;
 
             let physicsBody = null;
             if (physicsSystem && typeof physicsSystem.addVehicleMeshCollider === "function") {
                 const kin = physicsSystem.addVehicleMeshCollider(
-                    initState.x,
+                    posX,
                     0.02,
-                    initState.z,
-                    initState.yaw,
+                    posZ,
+                    yaw,
                     meshData.vertices,
                     meshData.indices,
                     coreBox
@@ -290,18 +192,26 @@ export async function loadVehicles(scene, physicsSystem = null) {
             }
 
             wrapper.userData = {
+                id,
                 type,
-                distance: startDistance,
+                axis,
+                direction,
+                laneCoord,
+                startCoord,
+                endCoord,
+                coord: currentCoord,
+                yaw,
+                approachAxis,
+                junctions,
                 cruiseSpeed,
                 currentSpeed: cruiseSpeed,
                 targetSpeed: cruiseSpeed,
-                R,
-                rCorner,
                 wheels,
-                wheelRadius: type === "bus" ? 0.38 * 1.3 * scale : 0.38 * scale,
                 physicsBody,
-                stopDistanceAhead: type === "bus" ? 22.0 : 16.0,
-                followDistanceAhead: type === "bus" ? 36.0 : 26.0,
+                respawnTimer: 0,
+                heading: new THREE.Vector2(axis === "X" ? direction : 0, axis === "Z" ? direction : 0),
+                stopDistanceAhead: type === "bus" ? 14.0 : 9.0,
+                followDistanceAhead: type === "bus" ? 26.0 : 18.0,
             };
 
             vehiclesGroup.add(wrapper);
@@ -309,69 +219,203 @@ export async function loadVehicles(scene, physicsSystem = null) {
             return wrapper;
         };
 
-        // -------------------------------------------------------------
-        // FLEET SETUP: 4 Cars & 2 Buses with diverse vibrant colors
-        // Evenly spaced along the 464.5m road circuit (interval ~77.4m)
-        // -------------------------------------------------------------
+        // -------------------------------------------------------------------------
+        // CORRIDOR ROUTES: From Road A's end to Road B's end
+        // - Wide 11.0m distance between opposite lanes (plenty of open clearance)
+        // - Starts at Road A's end (+/-245m), drives across city, disappears at Road B's end (+/-245m)
+        // - Respawns at Road A's end after a brief interval for continuous fresh traffic
+        // - Obeys traffic signals at the 4 crossroads conjunctions (+/-60, +/-60)
+        // -------------------------------------------------------------------------
         const vehicleConfigs = [
-            // 1. Electric Cyan Car
+            // 1. Southbound on East Avenue (Along X = 54.5m, Z: -245 to +245) - Blue Bus
             {
-                type: "car",
-                gltfScene: gltfCar.scene,
-                scale: CAR_SCALE,
-                primaryColor: 0x00d4ff,
-                accentColor: 0x00ffff,
-                startDistance: 0 * (P / 6),
-                cruiseSpeed: 10.5,
-            },
-            // 2. Metro Sapphire Blue Bus
-            {
+                id: 0,
+                name: "Bus_East_Southbound",
                 type: "bus",
                 gltfScene: gltfBus.scene,
                 scale: BUS_SCALE,
                 primaryColor: 0x0284c7,
                 accentColor: 0x38bdf8,
-                startDistance: 1 * (P / 6),
-                cruiseSpeed: 10.5,
+                axis: "Z",
+                direction: 1, // moving +Z
+                laneCoord: 54.5,
+                startCoord: -245,
+                endCoord: 245,
+                yaw: -Math.PI / 2,
+                approachAxis: "NS",
+                junctions: [
+                    { center: -60, stopLine: -78 },
+                    { center: 60, stopLine: 42 }
+                ],
+                initialProgress: 0.15,
+                cruiseSpeed: 9.5,
             },
-            // 3. Velocity Crimson Red Car
+
+            // 2. Northbound on East Avenue (Along X = 65.5m, Z: +245 to -245) - Cyan Sports Car
             {
+                id: 1,
+                name: "Car_East_Northbound",
                 type: "car",
                 gltfScene: gltfCar.scene,
                 scale: CAR_SCALE,
-                primaryColor: 0xff1744,
-                accentColor: 0xff5252,
-                startDistance: 2 * (P / 6),
+                primaryColor: 0x00d4ff,
+                accentColor: 0x00ffff,
+                axis: "Z",
+                direction: -1, // moving -Z
+                laneCoord: 65.5,
+                startCoord: 245,
+                endCoord: -245,
+                yaw: Math.PI / 2,
+                approachAxis: "NS",
+                junctions: [
+                    { center: 60, stopLine: 78 },
+                    { center: -60, stopLine: -42 }
+                ],
+                initialProgress: 0.60,
                 cruiseSpeed: 10.5,
             },
-            // 4. Cyber Taxi Amber Car
+
+            // 3. Southbound on West Avenue (Along X = -65.5m, Z: -245 to +245) - Sunset Orange Bus
             {
-                type: "car",
-                gltfScene: gltfCar.scene,
-                scale: CAR_SCALE,
-                primaryColor: 0xffaa00,
-                accentColor: 0xff9100,
-                startDistance: 3 * (P / 6),
-                cruiseSpeed: 10.5,
-            },
-            // 5. Neon Sunset Orange Bus
-            {
+                id: 2,
+                name: "Bus_West_Southbound",
                 type: "bus",
                 gltfScene: gltfBus.scene,
                 scale: BUS_SCALE,
                 primaryColor: 0xff5722,
                 accentColor: 0xffd600,
-                startDistance: 4 * (P / 6),
-                cruiseSpeed: 10.5,
+                axis: "Z",
+                direction: 1, // moving +Z
+                laneCoord: -65.5,
+                startCoord: -245,
+                endCoord: 245,
+                yaw: -Math.PI / 2,
+                approachAxis: "NS",
+                junctions: [
+                    { center: -60, stopLine: -78 },
+                    { center: 60, stopLine: 42 }
+                ],
+                initialProgress: 0.70,
+                cruiseSpeed: 9.5,
             },
-            // 6. Emerald Matrix Green Car
+
+            // 4. Northbound on West Avenue (Along X = -54.5m, Z: +245 to -245) - Emerald Matrix Car
             {
+                id: 3,
+                name: "Car_West_Northbound",
                 type: "car",
                 gltfScene: gltfCar.scene,
                 scale: CAR_SCALE,
                 primaryColor: 0x00e676,
                 accentColor: 0x76ff03,
-                startDistance: 5 * (P / 6),
+                axis: "Z",
+                direction: -1, // moving -Z
+                laneCoord: -54.5,
+                startCoord: 245,
+                endCoord: -245,
+                yaw: Math.PI / 2,
+                approachAxis: "NS",
+                junctions: [
+                    { center: 60, stopLine: 78 },
+                    { center: -60, stopLine: -42 }
+                ],
+                initialProgress: 0.25,
+                cruiseSpeed: 10.5,
+            },
+
+            // 5. Eastbound on North Avenue (Along Z = -54.5m, X: -245 to +245) - Futuristic Teal Bus
+            {
+                id: 4,
+                name: "Bus_North_Eastbound",
+                type: "bus",
+                gltfScene: gltfBus.scene,
+                scale: BUS_SCALE,
+                primaryColor: 0x00b4d8,
+                accentColor: 0x90e0ef,
+                axis: "X",
+                direction: 1, // moving +X
+                laneCoord: -54.5,
+                startCoord: -245,
+                endCoord: 245,
+                yaw: 0,
+                approachAxis: "EW",
+                junctions: [
+                    { center: -60, stopLine: -78 },
+                    { center: 60, stopLine: 42 }
+                ],
+                initialProgress: 0.35,
+                cruiseSpeed: 9.5,
+            },
+
+            // 6. Westbound on North Avenue (Along Z = -65.5m, X: +245 to -245) - Velocity Crimson Car
+            {
+                id: 5,
+                name: "Car_North_Westbound",
+                type: "car",
+                gltfScene: gltfCar.scene,
+                scale: CAR_SCALE,
+                primaryColor: 0xff1744,
+                accentColor: 0xff5252,
+                axis: "X",
+                direction: -1, // moving -X
+                laneCoord: -65.5,
+                startCoord: 245,
+                endCoord: -245,
+                yaw: Math.PI,
+                approachAxis: "EW",
+                junctions: [
+                    { center: 60, stopLine: 78 },
+                    { center: -60, stopLine: -42 }
+                ],
+                initialProgress: 0.80,
+                cruiseSpeed: 10.5,
+            },
+
+            // 7. Eastbound on South Avenue (Along Z = 65.5m, X: -245 to +245) - Royal Blue Bus
+            {
+                id: 6,
+                name: "Bus_South_Eastbound",
+                type: "bus",
+                gltfScene: gltfBus.scene,
+                scale: BUS_SCALE,
+                primaryColor: 0x1565c0,
+                accentColor: 0x42a5f5,
+                axis: "X",
+                direction: 1, // moving +X
+                laneCoord: 65.5,
+                startCoord: -245,
+                endCoord: 245,
+                yaw: 0,
+                approachAxis: "EW",
+                junctions: [
+                    { center: -60, stopLine: -78 },
+                    { center: 60, stopLine: 42 }
+                ],
+                initialProgress: 0.85,
+                cruiseSpeed: 9.5,
+            },
+
+            // 8. Westbound on South Avenue (Along Z = 54.5m, X: +245 to -245) - Cyber Taxi Amber Car
+            {
+                id: 7,
+                name: "Car_South_Westbound",
+                type: "car",
+                gltfScene: gltfCar.scene,
+                scale: CAR_SCALE,
+                primaryColor: 0xffaa00,
+                accentColor: 0xff9100,
+                axis: "X",
+                direction: -1, // moving -X
+                laneCoord: 54.5,
+                startCoord: 245,
+                endCoord: -245,
+                yaw: Math.PI,
+                approachAxis: "EW",
+                junctions: [
+                    { center: 60, stopLine: 78 },
+                    { center: -60, stopLine: -42 }
+                ],
+                initialProgress: 0.40,
                 cruiseSpeed: 10.5,
             },
         ];
@@ -379,7 +423,7 @@ export async function loadVehicles(scene, physicsSystem = null) {
         vehicleConfigs.forEach((cfg) => createVehicleInstance(cfg));
 
         // -------------------------------------------------------------
-        // Helper to spawn stationary parked cars with exact mesh colliders
+        // Parked cars in Modern Building parking lot
         // -------------------------------------------------------------
         const createParkedCar = (x, y, z, color) => {
             const car = gltfCar.scene.clone(true);
@@ -428,7 +472,6 @@ export async function loadVehicles(scene, physicsSystem = null) {
 
             vehiclesGroup.add(wrapper);
 
-            // Add static 3D mesh collider so character can never walk through parked cars
             if (physicsSystem && typeof physicsSystem.addStaticVehicleMesh === "function") {
                 physicsSystem.addStaticVehicleMesh(
                     x, y, z, 0,
@@ -441,7 +484,6 @@ export async function loadVehicles(scene, physicsSystem = null) {
             return wrapper;
         };
 
-        // Parked Cars on the parking lot of Modern Building
         const SHIFT_X = 120;
         createParkedCar(-32 + SHIFT_X, -0.2, -26.0, 0xd61c2b);
         createParkedCar(-32 + SHIFT_X, -0.2, -20.0, 0xffff00);
@@ -455,116 +497,166 @@ export async function loadVehicles(scene, physicsSystem = null) {
     return { vehiclesGroup, activeVehicles };
 }
 
-/**
- * Update vehicle positions, detect pedestrian & vehicle collision risks, and rotate tires
- *
- * @param {Array<THREE.Group>} activeVehicles
- * @param {number} delta
- * @param {THREE.Vector3|null} playerPos
- */
+// Updates vehicle positions, handles road conjunction traffic signals,
+// headway collision avoidance, pedestrian safety, and speed-synchronized tire rotation.
 export function updateVehicles(activeVehicles, delta, playerPos = null) {
     if (!activeVehicles || activeVehicles.length === 0) return;
 
-    const P = activeVehicles[0].userData.P || 464.4955;
+    for (let i = 0; i < activeVehicles.length; i++) {
+        const vi = activeVehicles[i];
+        const dataI = vi.userData;
 
-    // 1. Evaluate Traffic Headway & Pedestrian Proximity for each vehicle
-    activeVehicles.forEach((v) => {
-        const data = v.userData;
-        let desiredSpeed = data.cruiseSpeed;
+        // If vehicle is in respawn delay after disappearing at Road B's end
+        if (dataI.respawnTimer > 0) {
+            dataI.respawnTimer -= delta;
+            if (dataI.respawnTimer <= 0) {
+                // Respawn at Road A's start point
+                dataI.coord = dataI.startCoord;
+                dataI.currentSpeed = dataI.cruiseSpeed;
+                dataI.targetSpeed = dataI.cruiseSpeed;
+                vi.visible = true;
 
-        // --- A. Vehicle-to-Vehicle Collision Avoidance ---
-        // Find nearest vehicle ahead along the 1D circuit loop
-        let minAheadGap = Infinity;
-        let vehicleAhead = null;
-
-        for (const other of activeVehicles) {
-            if (other === v) continue;
-            const gap = ((other.userData.distance - data.distance) % P + P) % P;
-            if (gap > 0 && gap < minAheadGap) {
-                minAheadGap = gap;
-                vehicleAhead = other;
+                const px = dataI.axis === "Z" ? dataI.laneCoord : dataI.coord;
+                const pz = dataI.axis === "Z" ? dataI.coord : dataI.laneCoord;
+                vi.position.set(px, 0.02, pz);
+            } else {
+                continue;
             }
         }
 
-        if (minAheadGap < data.stopDistanceAhead) {
-            // Immediate stop behind leading vehicle
-            desiredSpeed = 0;
-        } else if (minAheadGap < data.followDistanceAhead) {
-            // Smoothly decelerate to match leading vehicle
-            const t = (minAheadGap - data.stopDistanceAhead) / (data.followDistanceAhead - data.stopDistanceAhead);
-            const aheadSpeed = vehicleAhead ? vehicleAhead.userData.currentSpeed : 0;
-            desiredSpeed = Math.min(data.cruiseSpeed * t, aheadSpeed);
+        let desiredSpeed = dataI.cruiseSpeed;
+        const posI = vi.position;
+        const headingI = dataI.heading;
+
+        // 1. Traffic Signal Compliance at Road Conjunctions
+        const isRedSignal = dataI.approachAxis === "NS" ? !trafficLightState.nsGreen : !trafficLightState.ewGreen;
+
+        for (const junction of dataI.junctions) {
+            const stopLine = junction.stopLine;
+            // Calculate distance to conjunction stop line based on travel direction
+            const distToStop = dataI.direction === 1 ? stopLine - dataI.coord : dataI.coord - stopLine;
+            const isApproachingStop = distToStop > -3.0 && distToStop < 32.0;
+
+            if (isApproachingStop && isRedSignal) {
+                if (distToStop <= 1.5) {
+                    desiredSpeed = 0;
+                } else if (distToStop < 28.0) {
+                    const t = Math.max(0, (distToStop - 1.5) / 26.5);
+                    desiredSpeed = Math.min(desiredSpeed, dataI.cruiseSpeed * t * t);
+                }
+            }
         }
 
-        // --- B. Pedestrian / Character Collision Avoidance ("stop that thing") ---
-        if (playerPos && Math.abs(playerPos.y - v.position.y) < 8.0) {
-            const dx = playerPos.x - v.position.x;
-            const dz = playerPos.z - v.position.z;
+        // 2. Vehicle-to-Vehicle Collision Avoidance (Queueing behind stopped cars at signals)
+        for (let j = 0; j < activeVehicles.length; j++) {
+            if (i === j) continue;
+            const vj = activeVehicles[j];
+            const dataJ = vj.userData;
+
+            if (!vj.visible || dataJ.respawnTimer > 0) continue;
+
+            // Only check vehicles sharing the same road axis and lane coordinate
+            if (dataI.axis === dataJ.axis && Math.abs(dataI.laneCoord - dataJ.laneCoord) < 1.0 && dataI.direction === dataJ.direction) {
+                const forwardDist = dataI.direction * (dataJ.coord - dataI.coord);
+                const extraBusMargin = dataJ.type === "bus" ? 4.0 : 0.0;
+                const stopDist = dataI.stopDistanceAhead + extraBusMargin;
+                const followDist = dataI.followDistanceAhead + extraBusMargin;
+
+                if (forwardDist > 0 && forwardDist < followDist) {
+                    if (forwardDist <= stopDist) {
+                        desiredSpeed = 0;
+                    } else {
+                        const t = (forwardDist - stopDist) / (followDist - stopDist);
+                        desiredSpeed = Math.min(desiredSpeed, Math.min(dataI.cruiseSpeed * t, dataJ.currentSpeed));
+                    }
+                }
+            }
+        }
+
+        // 3. Pedestrian / Player Collision Avoidance
+        if (playerPos && Math.abs(playerPos.y - posI.y) < 8.0) {
+            const dx = playerPos.x - posI.x;
+            const dz = playerPos.z - posI.z;
             const dist = Math.hypot(dx, dz);
 
-            // Circuit tangent direction at vehicle's location
-            const state = getCircuitState(data.distance, data.R, data.rCorner);
-            const tdx = state.dx;
-            const tdz = state.dz;
+            const forwardDot = dx * headingI.x + dz * headingI.y;
+            const lateralDist = Math.abs(dx * (-headingI.y) + dz * headingI.x);
 
-            // Project player position onto forward heading and lateral road axis
-            const forwardDot = dx * tdx + dz * tdz;
-            const latOffset = Math.abs(dx * (-tdz) + dz * tdx);
+            const isBus = dataI.type === "bus";
+            const forwardDanger = isBus ? 18.0 : 13.0;
+            const closeDanger = isBus ? 7.0 : 5.0;
 
-            const isBus = data.type === "bus";
-            const forwardDangerDist = isBus ? 18.0 : 14.0;
-            const closeDangerRadius = isBus ? 8.0 : 6.0;
-
-            const isPlayerAheadInLane = forwardDot > -2.0 && forwardDot < forwardDangerDist && latOffset < 4.8;
-            const isPlayerTooClose = dist < closeDangerRadius;
-
-            if (isPlayerAheadInLane || isPlayerTooClose) {
-                // Pedestrian is in front or near vehicle: vehicle stops immediately!
+            if ((forwardDot > -2.0 && forwardDot < forwardDanger && lateralDist < 4.2) || dist < closeDanger) {
                 desiredSpeed = 0;
-                data.currentSpeed = 0; // Hard stop so vehicle never touches character
+                dataI.currentSpeed = 0;
+
+                // Honk horn at pedestrian
+                if (!dataI.lastPlayerHonk || Date.now() - dataI.lastPlayerHonk > 4000) {
+                    dataI.lastPlayerHonk = Date.now();
+                    soundSystem.playVehicleHorn(vi.position, isBus);
+                }
             }
         }
 
-        data.targetSpeed = desiredSpeed;
+        dataI.targetSpeed = desiredSpeed;
 
-        // --- C. Smooth Acceleration / Responsive Braking ---
-        if (data.targetSpeed < data.currentSpeed) {
-            // Fast responsive braking
-            data.currentSpeed = Math.max(data.targetSpeed, data.currentSpeed - 24.0 * delta);
+        // 4. Smooth Acceleration / Fast Responsive Braking
+        if (dataI.targetSpeed < dataI.currentSpeed) {
+            dataI.currentSpeed = Math.max(dataI.targetSpeed, dataI.currentSpeed - 24.0 * delta);
         } else {
-            // Gentle acceleration back up to cruising speed
-            data.currentSpeed = Math.min(data.targetSpeed, data.currentSpeed + 6.0 * delta);
+            dataI.currentSpeed = Math.min(dataI.targetSpeed, dataI.currentSpeed + 6.0 * delta);
         }
 
-        // --- D. Position & Rotation along Circuit ---
-        const distDelta = data.currentSpeed * delta;
-        data.distance = (data.distance + distDelta) % P;
-
-        const state = getCircuitState(data.distance, data.R, data.rCorner);
-        v.position.set(state.x, 0.02, state.z);
-        v.rotation.y = state.yaw;
-
-        // --- E. Wheel Rotation ---
-        if (data.wheels && data.wheels.length > 0 && data.currentSpeed > 0.01) {
-            const rotAngle = distDelta / (data.wheelRadius || 0.16);
-            data.wheels.forEach((wheel) => {
-                wheel.rotation.z = (wheel.rotation.z - rotAngle) % (Math.PI * 2);
-            });
+        // Hard zero snap when stopping so vehicle and wheels are 100% stationary
+        if (dataI.currentSpeed <= 0.05) {
+            dataI.currentSpeed = 0;
         }
 
-        // --- F. Synchronize Kinematic 3D Mesh Collider with Vehicle Motion ---
-        if (data.physicsBody) {
-            data.physicsBody.setNextKinematicTranslation({
-                x: state.x,
+        // 5. Advance Vehicle Along Road
+        const distDelta = dataI.currentSpeed * delta;
+        dataI.coord += dataI.direction * distDelta;
+
+        const posX = dataI.axis === "Z" ? dataI.laneCoord : dataI.coord;
+        const posZ = dataI.axis === "Z" ? dataI.coord : dataI.laneCoord;
+
+        vi.position.set(posX, 0.02, posZ);
+
+        // 6. Check if Vehicle Reached Road B's End -> Disappear
+        const reachedEnd = dataI.direction === 1 ? dataI.coord >= dataI.endCoord : dataI.coord <= dataI.endCoord;
+        if (reachedEnd) {
+            vi.visible = false;
+            dataI.respawnTimer = 2.0 + Math.random() * 2.0; // Wait 2-4 seconds offscreen before starting next trip
+            if (dataI.physicsBody) {
+                dataI.physicsBody.setNextKinematicTranslation({ x: 0, y: -100, z: 0 });
+            }
+            continue;
+        }
+
+        // 7. Tire Animation: Calm, slow, and clear rolling speed; strictly 0 when stopped
+        if (dataI.wheels && dataI.wheels.length > 0) {
+            if (dataI.currentSpeed > 0.05) {
+                // Reduced rolling rotation speed for smooth, distinct visual tire motion
+                const rotAngle = (dataI.currentSpeed * delta) / 2.0;
+                dataI.wheels.forEach((wheel) => {
+                    wheel.rotation.z = (wheel.rotation.z - rotAngle) % (Math.PI * 2);
+                });
+            }
+            // If currentSpeed <= 0.05, wheels DO NOT animate!
+        }
+
+        // 8. Synchronize Kinematic Rapier Mesh Collider
+        if (dataI.physicsBody && vi.visible) {
+            dataI.physicsBody.setNextKinematicTranslation({
+                x: posX,
                 y: 0.02,
-                z: state.z,
+                z: posZ,
             });
-            data.physicsBody.setNextKinematicRotation({
+            dataI.physicsBody.setNextKinematicRotation({
                 x: 0,
-                y: Math.sin(state.yaw / 2),
+                y: Math.sin(dataI.yaw / 2),
                 z: 0,
-                w: Math.cos(state.yaw / 2),
+                w: Math.cos(dataI.yaw / 2),
             });
         }
-    });
+    }
 }

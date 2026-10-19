@@ -1,6 +1,40 @@
 import * as THREE from "three";
 import { getModelLoader } from "./modelLoader.js";
 
+// Global traffic light controller state for the city conjunctions:
+// Alternates between North-South (NS) and East-West (EW) traffic.
+export const trafficLightState = {
+  nsGreen: true,
+  ewGreen: false,
+};
+
+const signalsList = [];
+let cycleTimer = 0;
+const CYCLE_DURATION = 26.0; // seconds
+
+// Updates traffic light cycle and animates emissive signals at road conjunctions
+export function updateSignals(delta) {
+  cycleTimer = (cycleTimer + delta) % CYCLE_DURATION;
+
+  // 0s - 11s: NS is GREEN, EW is RED
+  // 11s - 13s: Transitional All RED clearance
+  // 13s - 24s: EW is GREEN, NS is RED
+  // 24s - 26s: Transitional All RED clearance
+  const nsGreen = cycleTimer < 11.0;
+  const ewGreen = cycleTimer >= 13.0 && cycleTimer < 24.0;
+
+  trafficLightState.nsGreen = nsGreen;
+  trafficLightState.ewGreen = ewGreen;
+
+  signalsList.forEach((item) => {
+    const isGreen = item.approach === "NS" ? nsGreen : ewGreen;
+    if (item.greenOn) item.greenOn.visible = isGreen;
+    if (item.greenOff) item.greenOff.visible = !isGreen;
+    if (item.redOn) item.redOn.visible = !isGreen;
+    if (item.redOff) item.redOff.visible = isGreen;
+  });
+}
+
 export async function loadSignals(scene, physicsSystem = null) {
   const loader = getModelLoader();
   try {
@@ -9,8 +43,6 @@ export async function loadSignals(scene, physicsSystem = null) {
     signalsGroup.name = "City_Traffic_Signals_Group";
 
     // 1. Normalize Root Transform
-    // The exported model contains an arbitrary world offset, rotation, and scale on Traffic_Light_Root.
-    // Resetting these aligns the pole vertical axis to (0, 0, 0) with base at Y = 0 and lamps facing +Z.
     const rootNode = gltf.scene.getObjectByName("Traffic_Light_Root") || gltf.scene.children[0];
     if (rootNode) {
       rootNode.position.set(0, 0, 0);
@@ -55,15 +87,37 @@ export async function loadSignals(scene, physicsSystem = null) {
     const template = new THREE.Group();
     template.add(gltf.scene);
 
-    const createSignalInstance = (x, z, rotY) => {
+    const createSignalInstance = (x, z, rotY, approach) => {
       const signal = template.clone(true);
       signal.position.set(x, SIDEWALK_Y, z);
       signal.scale.set(SIGNAL_SCALE, SIGNAL_SCALE, SIGNAL_SCALE);
       signal.rotation.y = rotY;
 
+      // Find lamp nodes inside this cloned instance
+      const greenOn = signal.getObjectByName("Traffic_Light_Lamp_Green_On");
+      const greenOff = signal.getObjectByName("Traffic_Light_Lamp_Green_Off");
+      const redOn = signal.getObjectByName("Traffic_Light_Lamp_Red_On");
+      const redOff = signal.getObjectByName("Traffic_Light_Lamp_Red_Off");
+
+      // Clone materials so each signal can toggle independently
+      [greenOn, greenOff, redOn, redOff].forEach((lamp) => {
+        if (lamp && lamp.material) {
+          lamp.material = lamp.material.clone();
+        }
+      });
+
+      signalsList.push({
+        signal,
+        approach, // "NS" | "EW"
+        greenOn,
+        greenOff,
+        redOn,
+        redOff,
+      });
+
       signalsGroup.add(signal);
 
-      // Register vertical signal post obstacle collider (radius ~ 0.35m, height ~ 6.0m)
+      // Register vertical signal post obstacle collider
       if (physicsSystem) {
         physicsSystem.addStaticBox(x, 3.0, z, 0.35, 3.0, 0.35);
       }
@@ -79,19 +133,24 @@ export async function loadSignals(scene, physicsSystem = null) {
       { name: "SW", cx: -60, cz: 60 },
     ];
 
+    signalsList.length = 0; // Clear any existing registered signals
+
     junctions.forEach((j) => {
-      // North approach: positioned on NW corner curb, faces North towards oncoming cars
-      createSignalInstance(j.cx - 14.0, j.cz - 14.0, Math.PI);
+      // North approach: positioned on NW corner curb, faces North towards oncoming Southbound cars
+      createSignalInstance(j.cx - 14.0, j.cz - 14.0, Math.PI, "NS");
 
-      // East approach: positioned on NE corner curb, faces East towards oncoming cars
-      createSignalInstance(j.cx + 14.0, j.cz - 14.0, Math.PI / 2);
+      // East approach: positioned on NE corner curb, faces East towards oncoming Westbound cars
+      createSignalInstance(j.cx + 14.0, j.cz - 14.0, Math.PI / 2, "EW");
 
-      // South approach: positioned on SE corner curb, faces South towards oncoming cars
-      createSignalInstance(j.cx + 14.0, j.cz + 14.0, 0);
+      // South approach: positioned on SE corner curb, faces South towards oncoming Northbound cars
+      createSignalInstance(j.cx + 14.0, j.cz + 14.0, 0, "NS");
 
-      // West approach: positioned on SW corner curb, faces West towards oncoming cars
-      createSignalInstance(j.cx - 14.0, j.cz + 14.0, -Math.PI / 2);
+      // West approach: positioned on SW corner curb, faces West towards oncoming Eastbound cars
+      createSignalInstance(j.cx - 14.0, j.cz + 14.0, -Math.PI / 2, "EW");
     });
+
+    // Initial state setup
+    updateSignals(0);
 
     scene.add(signalsGroup);
     return signalsGroup;

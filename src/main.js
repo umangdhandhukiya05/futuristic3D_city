@@ -13,9 +13,10 @@ import { loadRoads } from "./world/loadRoads.js";
 import { loadBuilding } from "./world/loadBuilding.js";
 import { loadStreetLamps } from "./world/loadStreetLamps.js";
 import { loadBenches } from "./world/loadBenches.js";
-import { loadSignals } from "./world/loadSignals.js";
+import { loadSignals, updateSignals } from "./world/loadSignals.js";
 import { loadVehicles, updateVehicles } from "./world/loadVehicles.js";
 import { loadGlassDome, updateGlassDome } from "./world/loadGlassDome.js";
+import { soundSystem } from "./systems/SoundSystem.js";
 
 const container = document.querySelector("#app") || document.body;
 
@@ -42,8 +43,8 @@ const WALK_SPEED = 8.0;
 const SPRINT_SPEED = 14.0;
 const PLAYER_HEIGHT = 2.15;
 
-// Player starting spawn position in the central pedestrian plaza
-const spawnPos = new THREE.Vector3(0, PLAYER_HEIGHT, 24);
+// Player starting spawn position in the central pedestrian plaza (spawn slightly elevated so physics settles cleanly onto terrain/plaza)
+const spawnPos = new THREE.Vector3(0, PLAYER_HEIGHT + 0.35, 24);
 
 // Initialize Rapier Physics System (gravity, ground collider, kinematic character controller, boundary walls)
 const physicsSystem = await PhysicsSystem.create({
@@ -68,8 +69,10 @@ const playerController = new PlayerController({
 
 // Initialize Building Door System (interactive front doors for common-house and house)
 const doorSystem = new BuildingDoorSystem({
+  scene,
   physicsSystem,
   playerController,
+  dayNightSystem,
   domContainer: container,
 });
 
@@ -140,6 +143,7 @@ function updateHudView(mode) {
       <div class="sugg-chip"><kbd>Space</kbd><span>Jump</span></div>
       <div class="sugg-chip"><kbd>🖱️ Click</kbd><span>Look</span></div>
       <div class="sugg-chip primary"><kbd>E</kbd><span>Open Door</span></div>
+      <div class="sugg-chip accent"><kbd>F</kbd><span>House Lights</span></div>
       <div class="sugg-chip"><kbd>H</kbd><span>Hi-Five</span></div>
       <div class="sugg-chip"><kbd>Scroll</kbd><span>Zoom</span></div>
       <div class="sugg-chip"><kbd>V</kbd><span>Cam View</span></div>
@@ -153,6 +157,7 @@ function updateHudView(mode) {
       <div class="sugg-chip"><kbd>Space</kbd><span>Jump</span></div>
       <div class="sugg-chip"><kbd>🖱️ Click</kbd><span>Look</span></div>
       <div class="sugg-chip primary"><kbd>E</kbd><span>Open Door</span></div>
+      <div class="sugg-chip accent"><kbd>F</kbd><span>House Lights</span></div>
       <div class="sugg-chip"><kbd>3</kbd><span>TPP Robot</span></div>
       <div class="sugg-chip"><kbd>V</kbd><span>Cam View</span></div>
       <div class="sugg-chip accent"><kbd>L</kbd><span>Day/Night</span></div>
@@ -251,6 +256,10 @@ try {
   console.error("Error loading city assets:", error);
 }
 
+// Snap player cleanly to the exact ground surface now that all city colliders (roads, plaza, buildings) are loaded
+physicsSystem.snapPlayerToGround();
+playerController.syncModelPosition();
+
 // Register newly loaded city materials for dynamic day/night emissive lighting (streetlamps, windows)
 dayNightSystem.refreshMaterials();
 
@@ -263,9 +272,20 @@ function animate() {
   // Update day/night celestial cycle and atmosphere
   dayNightSystem.update(delta);
 
+  // Update road conjunction traffic light signals (alternating green/red cycle)
+  updateSignals(delta);
+
+  // Synchronize 3D Spatial Audio Listener with Camera
+  soundSystem.updateListener(camera);
+
   // Update vehicle traffic along road circuit with pedestrian & vehicle collision avoidance
   const characterPos = playerController?.robotGroup?.position || (physicsSystem ? physicsSystem.getPlayerPosition() : null);
   updateVehicles(activeVehicles, delta, characterPos);
+
+  // Update 3D spatial engine sounds and ambient traffic audio
+  if (characterPos) {
+    soundSystem.updateVehiclesAudio(activeVehicles, characterPos);
+  }
 
   // Update glass dome animation mixer (pulsating energy core & gyroscopic orbit rings)
   updateGlassDome(delta);

@@ -1,12 +1,10 @@
 import * as THREE from "three";
 
-/**
- * Procedural Realistic Lunar Surface Texture Generator (1024 x 512).
- * Generates accurate selenographic features:
- * - Basaltic dark maria (Imbrium, Procellarum, Serenitatis, Tranquillitatis, Crisium, etc.)
- * - Anorthosite highlands with crater mottling
- * - Iconic impact craters with dramatic radial ejecta ray systems (Tycho, Copernicus, Kepler, Aristarchus)
- */
+// Procedural Realistic Lunar Surface Texture Generator (1024 x 512).
+// Generates accurate selenographic features:
+// - Basaltic dark maria (Imbrium, Procellarum, Serenitatis, Tranquillitatis, Crisium, etc.)
+// - Anorthosite highlands with crater mottling
+// - Iconic impact craters with dramatic radial ejecta ray systems (Tycho, Copernicus, Kepler, Aristarchus)
 export function createRealisticMoonTexture() {
   const width = 1024;
   const height = 512;
@@ -170,14 +168,16 @@ export function createSunShaderMaterial() {
       uSunsetFactor: { value: 0.0 }, // 0 = midday pure white, 1 = sunset crimson
       uOpacity: { value: 1.0 },
     },
-    vertexShader: /* glsl */ `
+    // glsl
+    vertexShader: `
       varying vec2 vUv;
       void main() {
         vUv = uv;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }
     `,
-    fragmentShader: /* glsl */ `
+    // glsl
+    fragmentShader: `
       uniform float uTime;
       uniform float uSunsetFactor;
       uniform float uOpacity;
@@ -246,14 +246,16 @@ export function createSunCoronaMaterial() {
       uSunsetFactor: { value: 0.0 },
       uOpacity: { value: 1.0 },
     },
-    vertexShader: /* glsl */ `
+    // glsl
+    vertexShader: `
       varying vec2 vUv;
       void main() {
         vUv = uv;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }
     `,
-    fragmentShader: /* glsl */ `
+    // glsl
+    fragmentShader: `
       uniform float uTime;
       uniform float uSunsetFactor;
       uniform float uOpacity;
@@ -304,7 +306,8 @@ export function createMoonShaderMaterial(moonTexture) {
       uSunDirection: { value: new THREE.Vector3(1, 0.5, 0).normalize() },
       uOpacity: { value: 1.0 },
     },
-    vertexShader: /* glsl */ `
+    // glsl
+    vertexShader: `
       varying vec2 vUv;
       varying vec3 vWorldNormal;
       varying vec3 vWorldPosition;
@@ -317,7 +320,8 @@ export function createMoonShaderMaterial(moonTexture) {
         gl_Position = projectionMatrix * viewMatrix * worldPos;
       }
     `,
-    fragmentShader: /* glsl */ `
+    // glsl
+    fragmentShader: `
       uniform sampler2D uMap;
       uniform vec3 uSunDirection;
       uniform float uOpacity;
@@ -380,14 +384,16 @@ export function createMoonGlowMaterial() {
       uNightFactor: { value: 1.0 },
       uOpacity: { value: 1.0 },
     },
-    vertexShader: /* glsl */ `
+    // glsl
+    vertexShader: `
       varying vec2 vUv;
       void main() {
         vUv = uv;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }
     `,
-    fragmentShader: /* glsl */ `
+    // glsl
+    fragmentShader: `
       uniform vec3 uMoonGlowColor;
       uniform float uNightFactor;
       uniform float uOpacity;
